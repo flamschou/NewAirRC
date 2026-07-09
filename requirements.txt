@@ -1,0 +1,7 @@
+torch
+monai
+pytorch-lightning
+tensorboard
+SimpleITK
+nibabel
+numpy
