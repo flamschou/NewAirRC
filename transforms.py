@@ -6,10 +6,12 @@ Modality-agnostic MONAI preprocessing/augmentation pipelines. No CT-specific
 logic (e.g. Hounsfield unit clipping) -- this pipeline targets already
 roughly-normalized volumes (originally written for z-scored synthetic MRI).
 """
+import torch
 from monai.transforms import (
     Compose,
     EnsureChannelFirstd,
     EnsureTyped,
+    Lambdad,
     LoadImaged,
     NormalizeIntensityd,
     Orientationd,
@@ -25,10 +27,32 @@ from monai.transforms import (
 KEYS = ["image", "label"]
 
 
+def _make_label_filter(keep_classes):
+    """
+    Args:
+        keep_classes (Sequence[int]): raw label values to keep as
+            foreground (remapped to 1); every other value becomes 0.
+    Returns:
+        Callable[[torch.Tensor], torch.Tensor]
+    """
+    keep_classes = list(keep_classes)
+
+    def _filter(label):
+        keep_tensor = torch.as_tensor(keep_classes, dtype=label.dtype, device=label.device)
+        mask = torch.isin(label, keep_tensor)
+        out = label.clone()
+        out[mask] = 1
+        out[~mask] = 0
+        return out
+
+    return _filter
+
+
 def _base_transforms(config):
     transforms = [
         LoadImaged(keys=KEYS),
         EnsureChannelFirstd(keys=KEYS),
+        Lambdad(keys=["label"], func=_make_label_filter(config.KEEP_LABEL_CLASSES)),
         Orientationd(keys=KEYS, axcodes="RAS"),
         Spacingd(
             keys=KEYS,

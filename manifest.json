@@ -1,0 +1,992 @@
+[
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0004/generated_MRI_LIDC-IDRI-0004.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0004/vascular_LIDC-IDRI-0004.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0010/generated_MRI_LIDC-IDRI-0010.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0010/vascular_LIDC-IDRI-0010.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0012/generated_MRI_LIDC-IDRI-0012.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0012/vascular_LIDC-IDRI-0012.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0023/generated_MRI_LIDC-IDRI-0023.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0023/vascular_LIDC-IDRI-0023.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0036/generated_MRI_LIDC-IDRI-0036.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0036/vascular_LIDC-IDRI-0036.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0039/generated_MRI_LIDC-IDRI-0039.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0039/vascular_LIDC-IDRI-0039.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0045/generated_MRI_LIDC-IDRI-0045.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0045/vascular_LIDC-IDRI-0045.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0187/generated_MRI_LIDC-IDRI-0187.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0187/vascular_LIDC-IDRI-0187.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0194/generated_MRI_LIDC-IDRI-0194.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0194/vascular_LIDC-IDRI-0194.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0206/generated_MRI_LIDC-IDRI-0206.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0206/vascular_LIDC-IDRI-0206.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0207/generated_MRI_LIDC-IDRI-0207.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0207/vascular_LIDC-IDRI-0207.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0210/generated_MRI_LIDC-IDRI-0210.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0210/vascular_LIDC-IDRI-0210.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0211/generated_MRI_LIDC-IDRI-0211.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0211/vascular_LIDC-IDRI-0211.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0212/generated_MRI_LIDC-IDRI-0212.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0212/vascular_LIDC-IDRI-0212.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0223/generated_MRI_LIDC-IDRI-0223.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0223/vascular_LIDC-IDRI-0223.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0229/generated_MRI_LIDC-IDRI-0229.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0229/vascular_LIDC-IDRI-0229.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0237/generated_MRI_LIDC-IDRI-0237.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0237/vascular_LIDC-IDRI-0237.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0249/generated_MRI_LIDC-IDRI-0249.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0249/vascular_LIDC-IDRI-0249.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0264/generated_MRI_LIDC-IDRI-0264.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0264/vascular_LIDC-IDRI-0264.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0269/generated_MRI_LIDC-IDRI-0269.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0269/vascular_LIDC-IDRI-0269.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0288/generated_MRI_LIDC-IDRI-0288.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0288/vascular_LIDC-IDRI-0288.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0292/generated_MRI_LIDC-IDRI-0292.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0292/vascular_LIDC-IDRI-0292.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0298/generated_MRI_LIDC-IDRI-0298.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0298/vascular_LIDC-IDRI-0298.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0299/generated_MRI_LIDC-IDRI-0299.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0299/vascular_LIDC-IDRI-0299.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0300/generated_MRI_LIDC-IDRI-0300.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0300/vascular_LIDC-IDRI-0300.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0308/generated_MRI_LIDC-IDRI-0308.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0308/vascular_LIDC-IDRI-0308.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0309/generated_MRI_LIDC-IDRI-0309.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0309/vascular_LIDC-IDRI-0309.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0332/generated_MRI_LIDC-IDRI-0332.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0332/vascular_LIDC-IDRI-0332.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/generated_MRI_LIDC-IDRI-0338.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/vascular_LIDC-IDRI-0338.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0340/generated_MRI_LIDC-IDRI-0340.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0340/vascular_LIDC-IDRI-0340.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0344/generated_MRI_LIDC-IDRI-0344.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0344/vascular_LIDC-IDRI-0344.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0350/generated_MRI_LIDC-IDRI-0350.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0350/vascular_LIDC-IDRI-0350.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0352/generated_MRI_LIDC-IDRI-0352.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0352/vascular_LIDC-IDRI-0352.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0362/generated_MRI_LIDC-IDRI-0362.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0362/vascular_LIDC-IDRI-0362.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0369/generated_MRI_LIDC-IDRI-0369.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0369/vascular_LIDC-IDRI-0369.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0375/generated_MRI_LIDC-IDRI-0375.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0375/vascular_LIDC-IDRI-0375.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0376/generated_MRI_LIDC-IDRI-0376.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0376/vascular_LIDC-IDRI-0376.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0380/generated_MRI_LIDC-IDRI-0380.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0380/vascular_LIDC-IDRI-0380.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0385/generated_MRI_LIDC-IDRI-0385.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0385/vascular_LIDC-IDRI-0385.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0386/generated_MRI_LIDC-IDRI-0386.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0386/vascular_LIDC-IDRI-0386.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0388/generated_MRI_LIDC-IDRI-0388.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0388/vascular_LIDC-IDRI-0388.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0392/generated_MRI_LIDC-IDRI-0392.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0392/vascular_LIDC-IDRI-0392.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0407/generated_MRI_LIDC-IDRI-0407.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0407/vascular_LIDC-IDRI-0407.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0409/generated_MRI_LIDC-IDRI-0409.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0409/vascular_LIDC-IDRI-0409.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0411/generated_MRI_LIDC-IDRI-0411.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0411/vascular_LIDC-IDRI-0411.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0412/generated_MRI_LIDC-IDRI-0412.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0412/vascular_LIDC-IDRI-0412.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0416/generated_MRI_LIDC-IDRI-0416.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0416/vascular_LIDC-IDRI-0416.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0424/generated_MRI_LIDC-IDRI-0424.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0424/vascular_LIDC-IDRI-0424.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0427/generated_MRI_LIDC-IDRI-0427.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0427/vascular_LIDC-IDRI-0427.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0430/generated_MRI_LIDC-IDRI-0430.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0430/vascular_LIDC-IDRI-0430.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0433/generated_MRI_LIDC-IDRI-0433.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0433/vascular_LIDC-IDRI-0433.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0434/generated_MRI_LIDC-IDRI-0434.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0434/vascular_LIDC-IDRI-0434.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0437/generated_MRI_LIDC-IDRI-0437.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0437/vascular_LIDC-IDRI-0437.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0438/generated_MRI_LIDC-IDRI-0438.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0438/vascular_LIDC-IDRI-0438.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0445/generated_MRI_LIDC-IDRI-0445.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0445/vascular_LIDC-IDRI-0445.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0448/generated_MRI_LIDC-IDRI-0448.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0448/vascular_LIDC-IDRI-0448.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0456/generated_MRI_LIDC-IDRI-0456.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0456/vascular_LIDC-IDRI-0456.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0460/generated_MRI_LIDC-IDRI-0460.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0460/vascular_LIDC-IDRI-0460.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0462/generated_MRI_LIDC-IDRI-0462.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0462/vascular_LIDC-IDRI-0462.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0463/generated_MRI_LIDC-IDRI-0463.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0463/vascular_LIDC-IDRI-0463.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0469/generated_MRI_LIDC-IDRI-0469.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0469/vascular_LIDC-IDRI-0469.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0470/generated_MRI_LIDC-IDRI-0470.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0470/vascular_LIDC-IDRI-0470.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0481/generated_MRI_LIDC-IDRI-0481.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0481/vascular_LIDC-IDRI-0481.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0485/generated_MRI_LIDC-IDRI-0485.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0485/vascular_LIDC-IDRI-0485.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0486/generated_MRI_LIDC-IDRI-0486.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0486/vascular_LIDC-IDRI-0486.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0487/generated_MRI_LIDC-IDRI-0487.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0487/vascular_LIDC-IDRI-0487.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0488/generated_MRI_LIDC-IDRI-0488.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0488/vascular_LIDC-IDRI-0488.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0490/generated_MRI_LIDC-IDRI-0490.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0490/vascular_LIDC-IDRI-0490.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0491/generated_MRI_LIDC-IDRI-0491.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0491/vascular_LIDC-IDRI-0491.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0492/generated_MRI_LIDC-IDRI-0492.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0492/vascular_LIDC-IDRI-0492.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0507/generated_MRI_LIDC-IDRI-0507.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0507/vascular_LIDC-IDRI-0507.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0508/generated_MRI_LIDC-IDRI-0508.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0508/vascular_LIDC-IDRI-0508.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0510/generated_MRI_LIDC-IDRI-0510.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0510/vascular_LIDC-IDRI-0510.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0515/generated_MRI_LIDC-IDRI-0515.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0515/vascular_LIDC-IDRI-0515.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0521/generated_MRI_LIDC-IDRI-0521.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0521/vascular_LIDC-IDRI-0521.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0522/generated_MRI_LIDC-IDRI-0522.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0522/vascular_LIDC-IDRI-0522.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0525/generated_MRI_LIDC-IDRI-0525.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0525/vascular_LIDC-IDRI-0525.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0530/generated_MRI_LIDC-IDRI-0530.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0530/vascular_LIDC-IDRI-0530.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0535/generated_MRI_LIDC-IDRI-0535.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0535/vascular_LIDC-IDRI-0535.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0537/generated_MRI_LIDC-IDRI-0537.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0537/vascular_LIDC-IDRI-0537.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0542/generated_MRI_LIDC-IDRI-0542.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0542/vascular_LIDC-IDRI-0542.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0543/generated_MRI_LIDC-IDRI-0543.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0543/vascular_LIDC-IDRI-0543.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0555/generated_MRI_LIDC-IDRI-0555.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0555/vascular_LIDC-IDRI-0555.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0556/generated_MRI_LIDC-IDRI-0556.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0556/vascular_LIDC-IDRI-0556.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0557/generated_MRI_LIDC-IDRI-0557.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0557/vascular_LIDC-IDRI-0557.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0565/generated_MRI_LIDC-IDRI-0565.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0565/vascular_LIDC-IDRI-0565.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0569/generated_MRI_LIDC-IDRI-0569.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0569/vascular_LIDC-IDRI-0569.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0576/generated_MRI_LIDC-IDRI-0576.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0576/vascular_LIDC-IDRI-0576.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0579/generated_MRI_LIDC-IDRI-0579.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0579/vascular_LIDC-IDRI-0579.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0582/generated_MRI_LIDC-IDRI-0582.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0582/vascular_LIDC-IDRI-0582.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0587/generated_MRI_LIDC-IDRI-0587.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0587/vascular_LIDC-IDRI-0587.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0590/generated_MRI_LIDC-IDRI-0590.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0590/vascular_LIDC-IDRI-0590.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0594/generated_MRI_LIDC-IDRI-0594.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0594/vascular_LIDC-IDRI-0594.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0596/generated_MRI_LIDC-IDRI-0596.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0596/vascular_LIDC-IDRI-0596.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0602/generated_MRI_LIDC-IDRI-0602.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0602/vascular_LIDC-IDRI-0602.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0608/generated_MRI_LIDC-IDRI-0608.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0608/vascular_LIDC-IDRI-0608.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0610/generated_MRI_LIDC-IDRI-0610.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0610/vascular_LIDC-IDRI-0610.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0614/generated_MRI_LIDC-IDRI-0614.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0614/vascular_LIDC-IDRI-0614.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0617/generated_MRI_LIDC-IDRI-0617.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0617/vascular_LIDC-IDRI-0617.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0625/generated_MRI_LIDC-IDRI-0625.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0625/vascular_LIDC-IDRI-0625.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0628/generated_MRI_LIDC-IDRI-0628.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0628/vascular_LIDC-IDRI-0628.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0631/generated_MRI_LIDC-IDRI-0631.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0631/vascular_LIDC-IDRI-0631.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0634/generated_MRI_LIDC-IDRI-0634.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0634/vascular_LIDC-IDRI-0634.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0636/generated_MRI_LIDC-IDRI-0636.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0636/vascular_LIDC-IDRI-0636.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0637/generated_MRI_LIDC-IDRI-0637.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0637/vascular_LIDC-IDRI-0637.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0639/generated_MRI_LIDC-IDRI-0639.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0639/vascular_LIDC-IDRI-0639.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0649/generated_MRI_LIDC-IDRI-0649.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0649/vascular_LIDC-IDRI-0649.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0651/generated_MRI_LIDC-IDRI-0651.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0651/vascular_LIDC-IDRI-0651.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0655/generated_MRI_LIDC-IDRI-0655.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0655/vascular_LIDC-IDRI-0655.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0658/generated_MRI_LIDC-IDRI-0658.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0658/vascular_LIDC-IDRI-0658.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0659/generated_MRI_LIDC-IDRI-0659.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0659/vascular_LIDC-IDRI-0659.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0663/generated_MRI_LIDC-IDRI-0663.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0663/vascular_LIDC-IDRI-0663.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0674/generated_MRI_LIDC-IDRI-0674.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0674/vascular_LIDC-IDRI-0674.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0676/generated_MRI_LIDC-IDRI-0676.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0676/vascular_LIDC-IDRI-0676.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0682/generated_MRI_LIDC-IDRI-0682.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0682/vascular_LIDC-IDRI-0682.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0696/generated_MRI_LIDC-IDRI-0696.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0696/vascular_LIDC-IDRI-0696.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0698/generated_MRI_LIDC-IDRI-0698.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0698/vascular_LIDC-IDRI-0698.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0700/generated_MRI_LIDC-IDRI-0700.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0700/vascular_LIDC-IDRI-0700.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0701/generated_MRI_LIDC-IDRI-0701.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0701/vascular_LIDC-IDRI-0701.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0702/generated_MRI_LIDC-IDRI-0702.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0702/vascular_LIDC-IDRI-0702.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0704/generated_MRI_LIDC-IDRI-0704.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0704/vascular_LIDC-IDRI-0704.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0705/generated_MRI_LIDC-IDRI-0705.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0705/vascular_LIDC-IDRI-0705.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0708/generated_MRI_LIDC-IDRI-0708.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0708/vascular_LIDC-IDRI-0708.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0717/generated_MRI_LIDC-IDRI-0717.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0717/vascular_LIDC-IDRI-0717.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0720/generated_MRI_LIDC-IDRI-0720.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0720/vascular_LIDC-IDRI-0720.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0722/generated_MRI_LIDC-IDRI-0722.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0722/vascular_LIDC-IDRI-0722.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0726/generated_MRI_LIDC-IDRI-0726.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0726/vascular_LIDC-IDRI-0726.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0727/generated_MRI_LIDC-IDRI-0727.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0727/vascular_LIDC-IDRI-0727.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0729/generated_MRI_LIDC-IDRI-0729.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0729/vascular_LIDC-IDRI-0729.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0733/generated_MRI_LIDC-IDRI-0733.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0733/vascular_LIDC-IDRI-0733.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0735/generated_MRI_LIDC-IDRI-0735.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0735/vascular_LIDC-IDRI-0735.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0743/generated_MRI_LIDC-IDRI-0743.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0743/vascular_LIDC-IDRI-0743.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0744/generated_MRI_LIDC-IDRI-0744.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0744/vascular_LIDC-IDRI-0744.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0761/generated_MRI_LIDC-IDRI-0761.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0761/vascular_LIDC-IDRI-0761.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0763/generated_MRI_LIDC-IDRI-0763.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0763/vascular_LIDC-IDRI-0763.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0775/generated_MRI_LIDC-IDRI-0775.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0775/vascular_LIDC-IDRI-0775.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0788/generated_MRI_LIDC-IDRI-0788.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0788/vascular_LIDC-IDRI-0788.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0789/generated_MRI_LIDC-IDRI-0789.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0789/vascular_LIDC-IDRI-0789.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0791/generated_MRI_LIDC-IDRI-0791.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0791/vascular_LIDC-IDRI-0791.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0797/generated_MRI_LIDC-IDRI-0797.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0797/vascular_LIDC-IDRI-0797.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0801/generated_MRI_LIDC-IDRI-0801.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0801/vascular_LIDC-IDRI-0801.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0806/generated_MRI_LIDC-IDRI-0806.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0806/vascular_LIDC-IDRI-0806.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0807/generated_MRI_LIDC-IDRI-0807.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0807/vascular_LIDC-IDRI-0807.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0810/generated_MRI_LIDC-IDRI-0810.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0810/vascular_LIDC-IDRI-0810.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0811/generated_MRI_LIDC-IDRI-0811.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0811/vascular_LIDC-IDRI-0811.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0813/generated_MRI_LIDC-IDRI-0813.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0813/vascular_LIDC-IDRI-0813.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0815/generated_MRI_LIDC-IDRI-0815.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0815/vascular_LIDC-IDRI-0815.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0816/generated_MRI_LIDC-IDRI-0816.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0816/vascular_LIDC-IDRI-0816.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0821/generated_MRI_LIDC-IDRI-0821.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0821/vascular_LIDC-IDRI-0821.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0822/generated_MRI_LIDC-IDRI-0822.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0822/vascular_LIDC-IDRI-0822.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0826/generated_MRI_LIDC-IDRI-0826.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0826/vascular_LIDC-IDRI-0826.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0827/generated_MRI_LIDC-IDRI-0827.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0827/vascular_LIDC-IDRI-0827.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0836/generated_MRI_LIDC-IDRI-0836.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0836/vascular_LIDC-IDRI-0836.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0844/generated_MRI_LIDC-IDRI-0844.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0844/vascular_LIDC-IDRI-0844.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0845/generated_MRI_LIDC-IDRI-0845.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0845/vascular_LIDC-IDRI-0845.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0851/generated_MRI_LIDC-IDRI-0851.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0851/vascular_LIDC-IDRI-0851.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0854/generated_MRI_LIDC-IDRI-0854.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0854/vascular_LIDC-IDRI-0854.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0857/generated_MRI_LIDC-IDRI-0857.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0857/vascular_LIDC-IDRI-0857.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0859/generated_MRI_LIDC-IDRI-0859.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0859/vascular_LIDC-IDRI-0859.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0860/generated_MRI_LIDC-IDRI-0860.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0860/vascular_LIDC-IDRI-0860.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0863/generated_MRI_LIDC-IDRI-0863.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0863/vascular_LIDC-IDRI-0863.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0867/generated_MRI_LIDC-IDRI-0867.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0867/vascular_LIDC-IDRI-0867.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0870/generated_MRI_LIDC-IDRI-0870.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0870/vascular_LIDC-IDRI-0870.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0871/generated_MRI_LIDC-IDRI-0871.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0871/vascular_LIDC-IDRI-0871.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0875/generated_MRI_LIDC-IDRI-0875.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0875/vascular_LIDC-IDRI-0875.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0879/generated_MRI_LIDC-IDRI-0879.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0879/vascular_LIDC-IDRI-0879.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0880/generated_MRI_LIDC-IDRI-0880.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0880/vascular_LIDC-IDRI-0880.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0895/generated_MRI_LIDC-IDRI-0895.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0895/vascular_LIDC-IDRI-0895.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0898/generated_MRI_LIDC-IDRI-0898.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0898/vascular_LIDC-IDRI-0898.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0902/generated_MRI_LIDC-IDRI-0902.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0902/vascular_LIDC-IDRI-0902.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0911/generated_MRI_LIDC-IDRI-0911.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0911/vascular_LIDC-IDRI-0911.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0912/generated_MRI_LIDC-IDRI-0912.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0912/vascular_LIDC-IDRI-0912.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0913/generated_MRI_LIDC-IDRI-0913.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0913/vascular_LIDC-IDRI-0913.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0923/generated_MRI_LIDC-IDRI-0923.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0923/vascular_LIDC-IDRI-0923.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0928/generated_MRI_LIDC-IDRI-0928.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0928/vascular_LIDC-IDRI-0928.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0933/generated_MRI_LIDC-IDRI-0933.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0933/vascular_LIDC-IDRI-0933.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0938/generated_MRI_LIDC-IDRI-0938.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0938/vascular_LIDC-IDRI-0938.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0939/generated_MRI_LIDC-IDRI-0939.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0939/vascular_LIDC-IDRI-0939.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0940/generated_MRI_LIDC-IDRI-0940.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0940/vascular_LIDC-IDRI-0940.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0942/generated_MRI_LIDC-IDRI-0942.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0942/vascular_LIDC-IDRI-0942.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0947/generated_MRI_LIDC-IDRI-0947.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0947/vascular_LIDC-IDRI-0947.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0951/generated_MRI_LIDC-IDRI-0951.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0951/vascular_LIDC-IDRI-0951.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0953/generated_MRI_LIDC-IDRI-0953.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0953/vascular_LIDC-IDRI-0953.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0969/generated_MRI_LIDC-IDRI-0969.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0969/vascular_LIDC-IDRI-0969.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0973/generated_MRI_LIDC-IDRI-0973.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0973/vascular_LIDC-IDRI-0973.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0976/generated_MRI_LIDC-IDRI-0976.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0976/vascular_LIDC-IDRI-0976.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0978/generated_MRI_LIDC-IDRI-0978.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0978/vascular_LIDC-IDRI-0978.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0984/generated_MRI_LIDC-IDRI-0984.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0984/vascular_LIDC-IDRI-0984.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0985/generated_MRI_LIDC-IDRI-0985.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0985/vascular_LIDC-IDRI-0985.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0987/generated_MRI_LIDC-IDRI-0987.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0987/vascular_LIDC-IDRI-0987.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0994/generated_MRI_LIDC-IDRI-0994.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0994/vascular_LIDC-IDRI-0994.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0997/generated_MRI_LIDC-IDRI-0997.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0997/vascular_LIDC-IDRI-0997.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0999/generated_MRI_LIDC-IDRI-0999.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0999/vascular_LIDC-IDRI-0999.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1001/generated_MRI_LIDC-IDRI-1001.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1001/vascular_LIDC-IDRI-1001.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1003/generated_MRI_LIDC-IDRI-1003.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1003/vascular_LIDC-IDRI-1003.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1004/generated_MRI_LIDC-IDRI-1004.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1004/vascular_LIDC-IDRI-1004.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1005/generated_MRI_LIDC-IDRI-1005.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1005/vascular_LIDC-IDRI-1005.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1007/generated_MRI_LIDC-IDRI-1007.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1007/vascular_LIDC-IDRI-1007.nii.gz",
+    "split": "val"
+  }
+]

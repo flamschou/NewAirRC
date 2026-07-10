@@ -25,6 +25,15 @@ EXPERIMENT_NAME = "vessel_segmentation"
 CLASS_NAMES = ["background", "vessel"]
 NUM_CLASSES = len(CLASS_NAMES)
 
+# Raw label files may carry more classes than we train on (e.g. the
+# vascular_gen generator also labels airway structures as classes 1-2
+# alongside vessel classes 3-4). KEEP_LABEL_CLASSES lists which raw integer
+# values count as foreground "vessel"; everything else (including classes
+# that exist in the raw file but aren't listed here) collapses to
+# background=0. This remapping happens once, in transforms.py, so raw label
+# files don't need to be pre-processed on disk.
+KEEP_LABEL_CLASSES = (3, 4)
+
 # --- Geometry ---
 PATCH_SIZE = (128, 128, 128)
 TARGET_SPACING = (1.0, 1.0, 1.0)
@@ -58,3 +67,14 @@ if DEBUG:
     TRAIN_PATCH_BUDGET = 4
     VAL_PATCH_BUDGET = 2
     MAX_EPOCHS = 1
+    # A handful of patches from a single smoke-test volume don't need 8
+    # worker processes per loader (16 total) -- each spawns a fresh
+    # torch/monai import, which is what actually eats the RAM.
+    NUM_WORKERS = 0
+    # The smoke test only needs to exercise the pipeline mechanics, not
+    # produce a useful model -- the real memory/compute hog is the forward
+    # pass itself (128^3 patches through a 6-level, up-to-320-filter
+    # DynUNet). Shrink the patch (must stay a multiple of 32: 5 stride-2
+    # downsamples) and drop to batch size 1.
+    PATCH_SIZE = (64, 64, 64)
+    BATCH_SIZE = 1

@@ -189,6 +189,8 @@ def main():
 
     if torch.cuda.is_available():
         accelerator, devices, precision = "gpu", [cfg.DEVICE_INDEX], "16-mixed"
+    elif torch.backends.mps.is_available():
+        accelerator, devices, precision = "mps", 1, 32
     else:
         accelerator, devices, precision = "cpu", 1, 32
 

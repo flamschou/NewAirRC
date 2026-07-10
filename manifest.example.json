@@ -1,12 +1,12 @@
 [
   {
     "image": "example_data/zscore_crop_CT_LIDC-IDRI-0015_gen.nii.gz",
-    "label": "example_data/label_binary_LIDC-IDRI-0015.nii.gz",
+    "label": "example_data/vascular_gen_LIDC-IDRI-0015.nii.gz",
     "split": "train"
   },
   {
     "image": "example_data/zscore_crop_CT_LIDC-IDRI-0015_gen.nii.gz",
-    "label": "example_data/label_binary_LIDC-IDRI-0015.nii.gz",
+    "label": "example_data/vascular_gen_LIDC-IDRI-0015.nii.gz",
     "split": "val"
   }
 ]
