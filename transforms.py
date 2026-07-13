@@ -21,6 +21,7 @@ from monai.transforms import (
     RandRotate90d,
     RandScaleIntensityd,
     RandShiftIntensityd,
+    ResampleToMatchd,
     Spacingd,
 )
 
@@ -54,11 +55,13 @@ def _base_transforms(config):
         EnsureChannelFirstd(keys=KEYS),
         Lambdad(keys=["label"], func=_make_label_filter(config.KEEP_LABEL_CLASSES)),
         Orientationd(keys=KEYS, axcodes="RAS"),
-        Spacingd(
-            keys=KEYS,
-            pixdim=config.TARGET_SPACING,
-            mode=("bilinear", "nearest"),
-        ),
+        # image and label come from separate generation pipelines with
+        # different fields of view, so resampling both independently to
+        # TARGET_SPACING does not guarantee matching shapes. Resample image
+        # to the target spacing, then resample label onto image's exact
+        # grid (using their affines) so shapes always match.
+        Spacingd(keys=["image"], pixdim=config.TARGET_SPACING, mode="bilinear"),
+        ResampleToMatchd(keys=["label"], key_dst="image", mode="nearest"),
     ]
     if config.NORMALIZE_INTENSITY:
         transforms.append(
