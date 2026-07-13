@@ -135,11 +135,6 @@
     "split": "train"
   },
   {
-    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0332/generated_MRI_LIDC-IDRI-0332.nii.gz",
-    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0332/vascular_LIDC-IDRI-0332.nii.gz",
-    "split": "train"
-  },
-  {
     "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/generated_MRI_LIDC-IDRI-0338.nii.gz",
     "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/vascular_LIDC-IDRI-0338.nii.gz",
     "split": "train"
