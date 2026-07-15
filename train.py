@@ -11,6 +11,7 @@ import os
 
 import pytorch_lightning
 import torch
+import torch.multiprocessing
 from monai.data import decollate_batch
 from monai.metrics import DiceMetric
 from monai.transforms import AsDiscrete, Compose, EnsureType
@@ -28,6 +29,8 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+
+torch.multiprocessing.set_sharing_strategy("file_system")
 
 
 class PolyLRScheduler(_LRScheduler):
