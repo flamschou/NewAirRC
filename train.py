@@ -63,6 +63,13 @@ class PolyLRScheduler(_LRScheduler):
     def get_last_lr(self):
         return self._last_lr
 
+    def state_dict(self):
+        return {"ctr": self.ctr, "_last_lr": self._last_lr}
+
+    def load_state_dict(self, state_dict):
+        self.ctr = state_dict["ctr"]
+        self._last_lr = state_dict["_last_lr"]
+
 
 class Net(pytorch_lightning.LightningModule):
     def __init__(self, train_ds, val_ds):
