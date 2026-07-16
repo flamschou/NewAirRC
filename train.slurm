@@ -20,4 +20,9 @@ conda activate flamant_segmentation
 export MANIFEST_PATH="$SLURM_SUBMIT_DIR/manifest.json"
 export DATASET_ROOT="/data/flamant/data/AirRC_runs/vessel_segmentation"  # TODO: persistent path for cache/checkpoints/logs
 
+echo "Node: $(hostname)"
+echo "Conda base: $(conda info --base)"
+echo "Python: $(which python)"
+python -c "import pytorch_lightning; print('pytorch_lightning OK:', pytorch_lightning.__version__)"
+
 python train.py
