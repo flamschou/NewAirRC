@@ -125,3 +125,29 @@ def get_val_transforms(config, num_samples):
         EnsureTyped(keys=KEYS),
     ]
     return Compose(transforms)
+
+
+def get_inference_transforms(config):
+    """
+    Image-only preprocessing for inference (no label available): load,
+    reorient, resample to TARGET_SPACING, normalize. Deterministic and
+    invertible, so the prediction can be mapped back onto the original
+    image's orientation/spacing with `monai.transforms.Invertd`.
+
+    Args:
+        config: config module (see config.py).
+    Returns:
+        monai.transforms.Compose
+    """
+    transforms = [
+        LoadImaged(keys=["image"]),
+        EnsureChannelFirstd(keys=["image"]),
+        Orientationd(keys=["image"], axcodes="RAS"),
+        Spacingd(keys=["image"], pixdim=config.TARGET_SPACING, mode="bilinear"),
+    ]
+    if config.NORMALIZE_INTENSITY:
+        transforms.append(
+            NormalizeIntensityd(keys=["image"], nonzero=False, channel_wise=True)
+        )
+    transforms.append(EnsureTyped(keys=["image"]))
+    return Compose(transforms)
