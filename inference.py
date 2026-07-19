@@ -125,7 +125,9 @@ def main():
     parser.add_argument("--checkpoint", required=True, help="Path to a .ckpt file")
     parser.add_argument("--input", help="Path to a single input image (.nii.gz)")
     parser.add_argument(
-        "--input-dir", help="Directory of images to run inference on (*.nii.gz)"
+        "--input-dir",
+        help="Directory of images to run inference on, searched recursively "
+        "(**/*.nii.gz)",
     )
     parser.add_argument(
         "--output",
@@ -146,9 +148,11 @@ def main():
         image_paths = [args.input]
         output_paths = [args.output or _default_output_path(args.input)]
     else:
-        image_paths = sorted(glob.glob(os.path.join(args.input_dir, "*.nii.gz")))
+        image_paths = sorted(
+            glob.glob(os.path.join(args.input_dir, "**", "*.nii.gz"), recursive=True)
+        )
         if not image_paths:
-            parser.error(f"No .nii.gz files found in {args.input_dir}")
+            parser.error(f"No .nii.gz files found under {args.input_dir}")
         output_paths = [
             _default_output_path(p, args.output_dir) for p in image_paths
         ]
