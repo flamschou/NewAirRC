@@ -28,22 +28,21 @@ from monai.transforms import (
 KEYS = ["image", "label"]
 
 
-def _make_label_filter(keep_classes):
+def _make_label_filter(label_class_map):
     """
     Args:
-        keep_classes (Sequence[int]): raw label values to keep as
-            foreground (remapped to 1); every other value becomes 0.
+        label_class_map (Mapping[int, int]): maps raw label values to the
+            training class index they should become; every other raw value
+            becomes background (0).
     Returns:
         Callable[[torch.Tensor], torch.Tensor]
     """
-    keep_classes = list(keep_classes)
+    label_class_map = dict(label_class_map)
 
     def _filter(label):
-        keep_tensor = torch.as_tensor(keep_classes, dtype=label.dtype, device=label.device)
-        mask = torch.isin(label, keep_tensor)
-        out = label.clone()
-        out[mask] = 1
-        out[~mask] = 0
+        out = torch.zeros_like(label)
+        for raw_value, class_index in label_class_map.items():
+            out[label == raw_value] = class_index
         return out
 
     return _filter
@@ -53,7 +52,7 @@ def _base_transforms(config):
     transforms = [
         LoadImaged(keys=KEYS),
         EnsureChannelFirstd(keys=KEYS),
-        Lambdad(keys=["label"], func=_make_label_filter(config.KEEP_LABEL_CLASSES)),
+        Lambdad(keys=["label"], func=_make_label_filter(config.LABEL_CLASS_MAP)),
         Orientationd(keys=KEYS, axcodes="RAS"),
         # image and label come from separate generation pipelines with
         # different fields of view, so resampling both independently to

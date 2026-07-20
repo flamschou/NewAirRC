@@ -22,17 +22,21 @@ EXPERIMENT_NAME = "vessel_segmentation"
 # NUM_CLASSES and the model's out_channels follow automatically, nothing
 # else in the codebase hardcodes a class count.
 # Example for a vein/artery split: ["background", "vein", "artery"]
-CLASS_NAMES = ["background", "vessel"]
+CLASS_NAMES = ["background", "vein", "artery"]
 NUM_CLASSES = len(CLASS_NAMES)
 
 # Raw label files may carry more classes than we train on (e.g. the
 # vascular_gen generator also labels airway structures as classes 1-2
-# alongside vessel classes 3-4). KEEP_LABEL_CLASSES lists which raw integer
-# values count as foreground "vessel"; everything else (including classes
-# that exist in the raw file but aren't listed here) collapses to
+# alongside vessel classes 3-4: raw 3 = artery, raw 4 = vein). LABEL_CLASS_MAP
+# maps each raw integer value to the training class index it should become;
+# any raw value not listed here (including airway classes 1-2) collapses to
 # background=0. This remapping happens once, in transforms.py, so raw label
-# files don't need to be pre-processed on disk.
-KEEP_LABEL_CLASSES = (3, 4)
+# files don't need to be pre-processed on disk. Keys must match indices into
+# CLASS_NAMES.
+LABEL_CLASS_MAP = {
+    4: CLASS_NAMES.index("vein"),
+    3: CLASS_NAMES.index("artery"),
+}
 
 # --- Geometry ---
 PATCH_SIZE = (128, 128, 128)
@@ -53,7 +57,7 @@ VAL_PATCH_BUDGET = 100
 POS_NEG_SAMPLE_RATIO = (1, 1)
 
 # --- Training ---
-BATCH_SIZE = 2
+BATCH_SIZE = 8
 NUM_WORKERS = 8
 LEARNING_RATE = 1e-3
 MAX_EPOCHS = 2000
