@@ -15,7 +15,7 @@ CACHE_DIR = os.path.join(ROOT_DIR, "cache")
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 
-EXPERIMENT_NAME = "vessel_segmentation"
+EXPERIMENT_NAME = "vessel_segmentation_vein_artery"
 
 # --- Classes ---
 # Index 0 must be the background. Add/remove foreground class names here --
