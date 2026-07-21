@@ -44,7 +44,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(args.checkpoint, cfg, device)
 
-    entries = manifest_module.load_manifest(cfg.MANIFEST_PATH)
+    entries = manifest_module.load_manifest("manifest.json")
     val_entries = [e for e in entries if e["split"] == "val"]
     entry = {"image": val_entries[0]["image"], "label": val_entries[0]["label"]}
 
