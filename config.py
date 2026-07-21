@@ -11,11 +11,19 @@ import os
 # --- Paths ---
 ROOT_DIR = os.environ.get("DATASET_ROOT", "./data")
 MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest.json"))
-CACHE_DIR = os.path.join(ROOT_DIR, "cache")
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 
-EXPERIMENT_NAME = "vessel_segmentation_vein_artery"
+EXPERIMENT_NAME = "vessel_segmentation_vein_artery_v2"
+
+# PersistentDataset's cache key is based only on item identity (image/label
+# paths), never on the transform pipeline itself -- changing any transform
+# that affects the deterministic preprocessing (LABEL_CLASS_MAP,
+# TARGET_SPACING, NORMALIZE_INTENSITY, ...) silently reuses stale cached
+# tensors otherwise. Scoping the cache dir to EXPERIMENT_NAME means the
+# rename that should already accompany such a change also gets you a fresh
+# cache for free.
+CACHE_DIR = os.path.join(ROOT_DIR, "cache", EXPERIMENT_NAME)
 
 # --- Classes ---
 # Index 0 must be the background. Add/remove foreground class names here --
