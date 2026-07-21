@@ -13,7 +13,7 @@ import numpy as np
 import config as cfg
 import manifest as manifest_module
 
-entries = manifest_module.load_manifest(cfg.MANIFEST_PATH)
+entries = manifest_module.load_manifest("manifest.json")
 
 totals = {raw: 0 for raw in cfg.LABEL_CLASS_MAP}
 volumes_with_class = {raw: 0 for raw in cfg.LABEL_CLASS_MAP}
