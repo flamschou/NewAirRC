@@ -101,7 +101,10 @@ def save_prediction(label_array, affine, output_path):
     nib.save(nib.Nifti1Image(label_array, affine), output_path)
 
 
-def _default_output_path(image_path, output_dir=None, suffix="_vascular_pred"):
+PRED_SUFFIX = "_vascular_pred"
+
+
+def _default_output_path(image_path, output_dir=None, suffix=PRED_SUFFIX):
     """
     Args:
         image_path (str): input image path.
@@ -139,6 +142,13 @@ def main():
         help="Output directory for --input-dir. Defaults to writing "
         "<name>_vascular_pred.nii.gz next to each input image.",
     )
+    parser.add_argument(
+        "--output-suffix",
+        default=PRED_SUFFIX,
+        help="Suffix inserted before the extension of generated files, e.g. "
+        f"'{PRED_SUFFIX}2' -> <name>{PRED_SUFFIX}2.nii.gz. "
+        f"Defaults to '{PRED_SUFFIX}'.",
+    )
     args = parser.parse_args()
 
     if bool(args.input) == bool(args.input_dir):
@@ -146,15 +156,20 @@ def main():
 
     if args.input:
         image_paths = [args.input]
-        output_paths = [args.output or _default_output_path(args.input)]
+        output_paths = [
+            args.output or _default_output_path(args.input, suffix=args.output_suffix)
+        ]
     else:
         image_paths = sorted(
-            glob.glob(os.path.join(args.input_dir, "**", "*.nii.gz"), recursive=True)
+            p
+            for p in glob.glob(os.path.join(args.input_dir, "**", "*.nii.gz"), recursive=True)
+            if PRED_SUFFIX not in os.path.basename(p)
         )
         if not image_paths:
             parser.error(f"No .nii.gz files found under {args.input_dir}")
         output_paths = [
-            _default_output_path(p, args.output_dir) for p in image_paths
+            _default_output_path(p, args.output_dir, suffix=args.output_suffix)
+            for p in image_paths
         ]
 
     if torch.cuda.is_available():
