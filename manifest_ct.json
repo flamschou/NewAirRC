@@ -1,0 +1,987 @@
+[
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0004/zscore_crop_CT_LIDC-IDRI-0004.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0004/vascular_LIDC-IDRI-0004.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0010/zscore_crop_CT_LIDC-IDRI-0010.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0010/vascular_LIDC-IDRI-0010.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0012/zscore_crop_CT_LIDC-IDRI-0012.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0012/vascular_LIDC-IDRI-0012.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0023/zscore_crop_CT_LIDC-IDRI-0023.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0023/vascular_LIDC-IDRI-0023.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0036/zscore_crop_CT_LIDC-IDRI-0036.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0036/vascular_LIDC-IDRI-0036.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0039/zscore_crop_CT_LIDC-IDRI-0039.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0039/vascular_LIDC-IDRI-0039.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0045/zscore_crop_CT_LIDC-IDRI-0045.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0045/vascular_LIDC-IDRI-0045.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0187/zscore_crop_CT_LIDC-IDRI-0187.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0187/vascular_LIDC-IDRI-0187.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0194/zscore_crop_CT_LIDC-IDRI-0194.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0194/vascular_LIDC-IDRI-0194.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0206/zscore_crop_CT_LIDC-IDRI-0206.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0206/vascular_LIDC-IDRI-0206.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0207/zscore_crop_CT_LIDC-IDRI-0207.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0207/vascular_LIDC-IDRI-0207.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0210/zscore_crop_CT_LIDC-IDRI-0210.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0210/vascular_LIDC-IDRI-0210.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0211/zscore_crop_CT_LIDC-IDRI-0211.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0211/vascular_LIDC-IDRI-0211.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0212/zscore_crop_CT_LIDC-IDRI-0212.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0212/vascular_LIDC-IDRI-0212.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0223/zscore_crop_CT_LIDC-IDRI-0223.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0223/vascular_LIDC-IDRI-0223.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0229/zscore_crop_CT_LIDC-IDRI-0229.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0229/vascular_LIDC-IDRI-0229.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0237/zscore_crop_CT_LIDC-IDRI-0237.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0237/vascular_LIDC-IDRI-0237.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0249/zscore_crop_CT_LIDC-IDRI-0249.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0249/vascular_LIDC-IDRI-0249.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0264/zscore_crop_CT_LIDC-IDRI-0264.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0264/vascular_LIDC-IDRI-0264.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0269/zscore_crop_CT_LIDC-IDRI-0269.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0269/vascular_LIDC-IDRI-0269.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0288/zscore_crop_CT_LIDC-IDRI-0288.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0288/vascular_LIDC-IDRI-0288.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0292/zscore_crop_CT_LIDC-IDRI-0292.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0292/vascular_LIDC-IDRI-0292.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0298/zscore_crop_CT_LIDC-IDRI-0298.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0298/vascular_LIDC-IDRI-0298.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0299/zscore_crop_CT_LIDC-IDRI-0299.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0299/vascular_LIDC-IDRI-0299.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0300/zscore_crop_CT_LIDC-IDRI-0300.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0300/vascular_LIDC-IDRI-0300.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0308/zscore_crop_CT_LIDC-IDRI-0308.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0308/vascular_LIDC-IDRI-0308.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0309/zscore_crop_CT_LIDC-IDRI-0309.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0309/vascular_LIDC-IDRI-0309.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/zscore_crop_CT_LIDC-IDRI-0338.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0338/vascular_LIDC-IDRI-0338.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0340/zscore_crop_CT_LIDC-IDRI-0340.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0340/vascular_LIDC-IDRI-0340.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0344/zscore_crop_CT_LIDC-IDRI-0344.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0344/vascular_LIDC-IDRI-0344.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0350/zscore_crop_CT_LIDC-IDRI-0350.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0350/vascular_LIDC-IDRI-0350.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0352/zscore_crop_CT_LIDC-IDRI-0352.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0352/vascular_LIDC-IDRI-0352.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0362/zscore_crop_CT_LIDC-IDRI-0362.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0362/vascular_LIDC-IDRI-0362.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0369/zscore_crop_CT_LIDC-IDRI-0369.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0369/vascular_LIDC-IDRI-0369.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0375/zscore_crop_CT_LIDC-IDRI-0375.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0375/vascular_LIDC-IDRI-0375.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0376/zscore_crop_CT_LIDC-IDRI-0376.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0376/vascular_LIDC-IDRI-0376.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0380/zscore_crop_CT_LIDC-IDRI-0380.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0380/vascular_LIDC-IDRI-0380.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0385/zscore_crop_CT_LIDC-IDRI-0385.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0385/vascular_LIDC-IDRI-0385.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0386/zscore_crop_CT_LIDC-IDRI-0386.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0386/vascular_LIDC-IDRI-0386.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0388/zscore_crop_CT_LIDC-IDRI-0388.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0388/vascular_LIDC-IDRI-0388.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0392/zscore_crop_CT_LIDC-IDRI-0392.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0392/vascular_LIDC-IDRI-0392.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0407/zscore_crop_CT_LIDC-IDRI-0407.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0407/vascular_LIDC-IDRI-0407.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0409/zscore_crop_CT_LIDC-IDRI-0409.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0409/vascular_LIDC-IDRI-0409.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0411/zscore_crop_CT_LIDC-IDRI-0411.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0411/vascular_LIDC-IDRI-0411.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0412/zscore_crop_CT_LIDC-IDRI-0412.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0412/vascular_LIDC-IDRI-0412.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0416/zscore_crop_CT_LIDC-IDRI-0416.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0416/vascular_LIDC-IDRI-0416.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0424/zscore_crop_CT_LIDC-IDRI-0424.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0424/vascular_LIDC-IDRI-0424.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0427/zscore_crop_CT_LIDC-IDRI-0427.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0427/vascular_LIDC-IDRI-0427.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0430/zscore_crop_CT_LIDC-IDRI-0430.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0430/vascular_LIDC-IDRI-0430.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0433/zscore_crop_CT_LIDC-IDRI-0433.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0433/vascular_LIDC-IDRI-0433.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0434/zscore_crop_CT_LIDC-IDRI-0434.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0434/vascular_LIDC-IDRI-0434.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0437/zscore_crop_CT_LIDC-IDRI-0437.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0437/vascular_LIDC-IDRI-0437.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0438/zscore_crop_CT_LIDC-IDRI-0438.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0438/vascular_LIDC-IDRI-0438.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0445/zscore_crop_CT_LIDC-IDRI-0445.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0445/vascular_LIDC-IDRI-0445.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0448/zscore_crop_CT_LIDC-IDRI-0448.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0448/vascular_LIDC-IDRI-0448.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0456/zscore_crop_CT_LIDC-IDRI-0456.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0456/vascular_LIDC-IDRI-0456.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0460/zscore_crop_CT_LIDC-IDRI-0460.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0460/vascular_LIDC-IDRI-0460.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0462/zscore_crop_CT_LIDC-IDRI-0462.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0462/vascular_LIDC-IDRI-0462.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0463/zscore_crop_CT_LIDC-IDRI-0463.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0463/vascular_LIDC-IDRI-0463.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0469/zscore_crop_CT_LIDC-IDRI-0469.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0469/vascular_LIDC-IDRI-0469.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0470/zscore_crop_CT_LIDC-IDRI-0470.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0470/vascular_LIDC-IDRI-0470.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0481/zscore_crop_CT_LIDC-IDRI-0481.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0481/vascular_LIDC-IDRI-0481.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0485/zscore_crop_CT_LIDC-IDRI-0485.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0485/vascular_LIDC-IDRI-0485.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0486/zscore_crop_CT_LIDC-IDRI-0486.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0486/vascular_LIDC-IDRI-0486.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0487/zscore_crop_CT_LIDC-IDRI-0487.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0487/vascular_LIDC-IDRI-0487.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0488/zscore_crop_CT_LIDC-IDRI-0488.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0488/vascular_LIDC-IDRI-0488.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0490/zscore_crop_CT_LIDC-IDRI-0490.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0490/vascular_LIDC-IDRI-0490.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0491/zscore_crop_CT_LIDC-IDRI-0491.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0491/vascular_LIDC-IDRI-0491.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0492/zscore_crop_CT_LIDC-IDRI-0492.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0492/vascular_LIDC-IDRI-0492.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0507/zscore_crop_CT_LIDC-IDRI-0507.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0507/vascular_LIDC-IDRI-0507.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0508/zscore_crop_CT_LIDC-IDRI-0508.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0508/vascular_LIDC-IDRI-0508.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0510/zscore_crop_CT_LIDC-IDRI-0510.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0510/vascular_LIDC-IDRI-0510.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0515/zscore_crop_CT_LIDC-IDRI-0515.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0515/vascular_LIDC-IDRI-0515.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0521/zscore_crop_CT_LIDC-IDRI-0521.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0521/vascular_LIDC-IDRI-0521.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0522/zscore_crop_CT_LIDC-IDRI-0522.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0522/vascular_LIDC-IDRI-0522.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0525/zscore_crop_CT_LIDC-IDRI-0525.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0525/vascular_LIDC-IDRI-0525.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0530/zscore_crop_CT_LIDC-IDRI-0530.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0530/vascular_LIDC-IDRI-0530.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0535/zscore_crop_CT_LIDC-IDRI-0535.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0535/vascular_LIDC-IDRI-0535.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0537/zscore_crop_CT_LIDC-IDRI-0537.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0537/vascular_LIDC-IDRI-0537.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0542/zscore_crop_CT_LIDC-IDRI-0542.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0542/vascular_LIDC-IDRI-0542.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0543/zscore_crop_CT_LIDC-IDRI-0543.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0543/vascular_LIDC-IDRI-0543.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0555/zscore_crop_CT_LIDC-IDRI-0555.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0555/vascular_LIDC-IDRI-0555.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0556/zscore_crop_CT_LIDC-IDRI-0556.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0556/vascular_LIDC-IDRI-0556.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0557/zscore_crop_CT_LIDC-IDRI-0557.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0557/vascular_LIDC-IDRI-0557.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0565/zscore_crop_CT_LIDC-IDRI-0565.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0565/vascular_LIDC-IDRI-0565.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0569/zscore_crop_CT_LIDC-IDRI-0569.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0569/vascular_LIDC-IDRI-0569.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0576/zscore_crop_CT_LIDC-IDRI-0576.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0576/vascular_LIDC-IDRI-0576.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0579/zscore_crop_CT_LIDC-IDRI-0579.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0579/vascular_LIDC-IDRI-0579.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0582/zscore_crop_CT_LIDC-IDRI-0582.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0582/vascular_LIDC-IDRI-0582.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0587/zscore_crop_CT_LIDC-IDRI-0587.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0587/vascular_LIDC-IDRI-0587.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0590/zscore_crop_CT_LIDC-IDRI-0590.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0590/vascular_LIDC-IDRI-0590.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0594/zscore_crop_CT_LIDC-IDRI-0594.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0594/vascular_LIDC-IDRI-0594.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0596/zscore_crop_CT_LIDC-IDRI-0596.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0596/vascular_LIDC-IDRI-0596.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0602/zscore_crop_CT_LIDC-IDRI-0602.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0602/vascular_LIDC-IDRI-0602.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0608/zscore_crop_CT_LIDC-IDRI-0608.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0608/vascular_LIDC-IDRI-0608.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0610/zscore_crop_CT_LIDC-IDRI-0610.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0610/vascular_LIDC-IDRI-0610.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0614/zscore_crop_CT_LIDC-IDRI-0614.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0614/vascular_LIDC-IDRI-0614.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0617/zscore_crop_CT_LIDC-IDRI-0617.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0617/vascular_LIDC-IDRI-0617.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0625/zscore_crop_CT_LIDC-IDRI-0625.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0625/vascular_LIDC-IDRI-0625.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0628/zscore_crop_CT_LIDC-IDRI-0628.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0628/vascular_LIDC-IDRI-0628.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0631/zscore_crop_CT_LIDC-IDRI-0631.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0631/vascular_LIDC-IDRI-0631.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0634/zscore_crop_CT_LIDC-IDRI-0634.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0634/vascular_LIDC-IDRI-0634.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0636/zscore_crop_CT_LIDC-IDRI-0636.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0636/vascular_LIDC-IDRI-0636.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0637/zscore_crop_CT_LIDC-IDRI-0637.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0637/vascular_LIDC-IDRI-0637.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0639/zscore_crop_CT_LIDC-IDRI-0639.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0639/vascular_LIDC-IDRI-0639.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0649/zscore_crop_CT_LIDC-IDRI-0649.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0649/vascular_LIDC-IDRI-0649.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0651/zscore_crop_CT_LIDC-IDRI-0651.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0651/vascular_LIDC-IDRI-0651.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0655/zscore_crop_CT_LIDC-IDRI-0655.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0655/vascular_LIDC-IDRI-0655.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0658/zscore_crop_CT_LIDC-IDRI-0658.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0658/vascular_LIDC-IDRI-0658.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0659/zscore_crop_CT_LIDC-IDRI-0659.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0659/vascular_LIDC-IDRI-0659.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0663/zscore_crop_CT_LIDC-IDRI-0663.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0663/vascular_LIDC-IDRI-0663.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0674/zscore_crop_CT_LIDC-IDRI-0674.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0674/vascular_LIDC-IDRI-0674.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0676/zscore_crop_CT_LIDC-IDRI-0676.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0676/vascular_LIDC-IDRI-0676.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0682/zscore_crop_CT_LIDC-IDRI-0682.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0682/vascular_LIDC-IDRI-0682.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0696/zscore_crop_CT_LIDC-IDRI-0696.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0696/vascular_LIDC-IDRI-0696.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0698/zscore_crop_CT_LIDC-IDRI-0698.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0698/vascular_LIDC-IDRI-0698.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0700/zscore_crop_CT_LIDC-IDRI-0700.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0700/vascular_LIDC-IDRI-0700.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0701/zscore_crop_CT_LIDC-IDRI-0701.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0701/vascular_LIDC-IDRI-0701.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0702/zscore_crop_CT_LIDC-IDRI-0702.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0702/vascular_LIDC-IDRI-0702.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0704/zscore_crop_CT_LIDC-IDRI-0704.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0704/vascular_LIDC-IDRI-0704.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0705/zscore_crop_CT_LIDC-IDRI-0705.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0705/vascular_LIDC-IDRI-0705.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0708/zscore_crop_CT_LIDC-IDRI-0708.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0708/vascular_LIDC-IDRI-0708.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0717/zscore_crop_CT_LIDC-IDRI-0717.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0717/vascular_LIDC-IDRI-0717.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0720/zscore_crop_CT_LIDC-IDRI-0720.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0720/vascular_LIDC-IDRI-0720.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0722/zscore_crop_CT_LIDC-IDRI-0722.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0722/vascular_LIDC-IDRI-0722.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0726/zscore_crop_CT_LIDC-IDRI-0726.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0726/vascular_LIDC-IDRI-0726.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0727/zscore_crop_CT_LIDC-IDRI-0727.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0727/vascular_LIDC-IDRI-0727.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0729/zscore_crop_CT_LIDC-IDRI-0729.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0729/vascular_LIDC-IDRI-0729.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0733/zscore_crop_CT_LIDC-IDRI-0733.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0733/vascular_LIDC-IDRI-0733.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0735/zscore_crop_CT_LIDC-IDRI-0735.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0735/vascular_LIDC-IDRI-0735.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0743/zscore_crop_CT_LIDC-IDRI-0743.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0743/vascular_LIDC-IDRI-0743.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0744/zscore_crop_CT_LIDC-IDRI-0744.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0744/vascular_LIDC-IDRI-0744.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0761/zscore_crop_CT_LIDC-IDRI-0761.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0761/vascular_LIDC-IDRI-0761.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0763/zscore_crop_CT_LIDC-IDRI-0763.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0763/vascular_LIDC-IDRI-0763.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0775/zscore_crop_CT_LIDC-IDRI-0775.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0775/vascular_LIDC-IDRI-0775.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0788/zscore_crop_CT_LIDC-IDRI-0788.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0788/vascular_LIDC-IDRI-0788.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0789/zscore_crop_CT_LIDC-IDRI-0789.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0789/vascular_LIDC-IDRI-0789.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0791/zscore_crop_CT_LIDC-IDRI-0791.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0791/vascular_LIDC-IDRI-0791.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0797/zscore_crop_CT_LIDC-IDRI-0797.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0797/vascular_LIDC-IDRI-0797.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0801/zscore_crop_CT_LIDC-IDRI-0801.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0801/vascular_LIDC-IDRI-0801.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0806/zscore_crop_CT_LIDC-IDRI-0806.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0806/vascular_LIDC-IDRI-0806.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0807/zscore_crop_CT_LIDC-IDRI-0807.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0807/vascular_LIDC-IDRI-0807.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0810/zscore_crop_CT_LIDC-IDRI-0810.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0810/vascular_LIDC-IDRI-0810.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0811/zscore_crop_CT_LIDC-IDRI-0811.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0811/vascular_LIDC-IDRI-0811.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0813/zscore_crop_CT_LIDC-IDRI-0813.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0813/vascular_LIDC-IDRI-0813.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0815/zscore_crop_CT_LIDC-IDRI-0815.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0815/vascular_LIDC-IDRI-0815.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0816/zscore_crop_CT_LIDC-IDRI-0816.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0816/vascular_LIDC-IDRI-0816.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0821/zscore_crop_CT_LIDC-IDRI-0821.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0821/vascular_LIDC-IDRI-0821.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0822/zscore_crop_CT_LIDC-IDRI-0822.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0822/vascular_LIDC-IDRI-0822.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0826/zscore_crop_CT_LIDC-IDRI-0826.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0826/vascular_LIDC-IDRI-0826.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0827/zscore_crop_CT_LIDC-IDRI-0827.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0827/vascular_LIDC-IDRI-0827.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0836/zscore_crop_CT_LIDC-IDRI-0836.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0836/vascular_LIDC-IDRI-0836.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0844/zscore_crop_CT_LIDC-IDRI-0844.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0844/vascular_LIDC-IDRI-0844.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0845/zscore_crop_CT_LIDC-IDRI-0845.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0845/vascular_LIDC-IDRI-0845.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0851/zscore_crop_CT_LIDC-IDRI-0851.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0851/vascular_LIDC-IDRI-0851.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0854/zscore_crop_CT_LIDC-IDRI-0854.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0854/vascular_LIDC-IDRI-0854.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0857/zscore_crop_CT_LIDC-IDRI-0857.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0857/vascular_LIDC-IDRI-0857.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0859/zscore_crop_CT_LIDC-IDRI-0859.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0859/vascular_LIDC-IDRI-0859.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0860/zscore_crop_CT_LIDC-IDRI-0860.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0860/vascular_LIDC-IDRI-0860.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0863/zscore_crop_CT_LIDC-IDRI-0863.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0863/vascular_LIDC-IDRI-0863.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0867/zscore_crop_CT_LIDC-IDRI-0867.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0867/vascular_LIDC-IDRI-0867.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0870/zscore_crop_CT_LIDC-IDRI-0870.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0870/vascular_LIDC-IDRI-0870.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0871/zscore_crop_CT_LIDC-IDRI-0871.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0871/vascular_LIDC-IDRI-0871.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0875/zscore_crop_CT_LIDC-IDRI-0875.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0875/vascular_LIDC-IDRI-0875.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0879/zscore_crop_CT_LIDC-IDRI-0879.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0879/vascular_LIDC-IDRI-0879.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0880/zscore_crop_CT_LIDC-IDRI-0880.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0880/vascular_LIDC-IDRI-0880.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0895/zscore_crop_CT_LIDC-IDRI-0895.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0895/vascular_LIDC-IDRI-0895.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0898/zscore_crop_CT_LIDC-IDRI-0898.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0898/vascular_LIDC-IDRI-0898.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0902/zscore_crop_CT_LIDC-IDRI-0902.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0902/vascular_LIDC-IDRI-0902.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0911/zscore_crop_CT_LIDC-IDRI-0911.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0911/vascular_LIDC-IDRI-0911.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0912/zscore_crop_CT_LIDC-IDRI-0912.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0912/vascular_LIDC-IDRI-0912.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0913/zscore_crop_CT_LIDC-IDRI-0913.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0913/vascular_LIDC-IDRI-0913.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0923/zscore_crop_CT_LIDC-IDRI-0923.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0923/vascular_LIDC-IDRI-0923.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0928/zscore_crop_CT_LIDC-IDRI-0928.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0928/vascular_LIDC-IDRI-0928.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0933/zscore_crop_CT_LIDC-IDRI-0933.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0933/vascular_LIDC-IDRI-0933.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0938/zscore_crop_CT_LIDC-IDRI-0938.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0938/vascular_LIDC-IDRI-0938.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0939/zscore_crop_CT_LIDC-IDRI-0939.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0939/vascular_LIDC-IDRI-0939.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0940/zscore_crop_CT_LIDC-IDRI-0940.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0940/vascular_LIDC-IDRI-0940.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0942/zscore_crop_CT_LIDC-IDRI-0942.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0942/vascular_LIDC-IDRI-0942.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0947/zscore_crop_CT_LIDC-IDRI-0947.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0947/vascular_LIDC-IDRI-0947.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0951/zscore_crop_CT_LIDC-IDRI-0951.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0951/vascular_LIDC-IDRI-0951.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0953/zscore_crop_CT_LIDC-IDRI-0953.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0953/vascular_LIDC-IDRI-0953.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0969/zscore_crop_CT_LIDC-IDRI-0969.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0969/vascular_LIDC-IDRI-0969.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0973/zscore_crop_CT_LIDC-IDRI-0973.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0973/vascular_LIDC-IDRI-0973.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0976/zscore_crop_CT_LIDC-IDRI-0976.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0976/vascular_LIDC-IDRI-0976.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0978/zscore_crop_CT_LIDC-IDRI-0978.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0978/vascular_LIDC-IDRI-0978.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0984/zscore_crop_CT_LIDC-IDRI-0984.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0984/vascular_LIDC-IDRI-0984.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0985/zscore_crop_CT_LIDC-IDRI-0985.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0985/vascular_LIDC-IDRI-0985.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0987/zscore_crop_CT_LIDC-IDRI-0987.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0987/vascular_LIDC-IDRI-0987.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0994/zscore_crop_CT_LIDC-IDRI-0994.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0994/vascular_LIDC-IDRI-0994.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0997/zscore_crop_CT_LIDC-IDRI-0997.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0997/vascular_LIDC-IDRI-0997.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0999/zscore_crop_CT_LIDC-IDRI-0999.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-0999/vascular_LIDC-IDRI-0999.nii.gz",
+    "split": "val"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1001/zscore_crop_CT_LIDC-IDRI-1001.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1001/vascular_LIDC-IDRI-1001.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1003/zscore_crop_CT_LIDC-IDRI-1003.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1003/vascular_LIDC-IDRI-1003.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1004/zscore_crop_CT_LIDC-IDRI-1004.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1004/vascular_LIDC-IDRI-1004.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1005/zscore_crop_CT_LIDC-IDRI-1005.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1005/vascular_LIDC-IDRI-1005.nii.gz",
+    "split": "train"
+  },
+  {
+    "image": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1007/zscore_crop_CT_LIDC-IDRI-1007.nii.gz",
+    "label": "/data/flamant/data/ct/lidc_idri/LIDC-IDRI-1007/vascular_LIDC-IDRI-1007.nii.gz",
+    "split": "val"
+  }
+]

@@ -10,11 +10,11 @@ import os
 
 # --- Paths ---
 ROOT_DIR = os.environ.get("DATASET_ROOT", "./data")
-MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest.json"))
+MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest_ct.json"))
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 
-EXPERIMENT_NAME = "vessel_segmentation_artery_only_v1"
+EXPERIMENT_NAME = "vessel_segmentation_vein_artery_ct_v1"
 
 # PersistentDataset's cache key is based only on item identity (image/label
 # paths), never on the transform pipeline itself -- changing any transform
@@ -29,20 +29,20 @@ CACHE_DIR = os.path.join(ROOT_DIR, "cache", EXPERIMENT_NAME)
 # Index 0 must be the background. Add/remove foreground class names here --
 # NUM_CLASSES and the model's out_channels follow automatically, nothing
 # else in the codebase hardcodes a class count.
-# Example for a vein/artery split: ["background", "vein", "artery"]
-CLASS_NAMES = ["background", "artery"]
+CLASS_NAMES = ["background", "artery", "vein"]
 NUM_CLASSES = len(CLASS_NAMES)
 
 # Raw label files may carry more classes than we train on (e.g. the
 # vascular_gen generator also labels airway structures as classes 1-2
 # alongside vessel classes 3-4: raw 3 = artery, raw 4 = vein). LABEL_CLASS_MAP
 # maps each raw integer value to the training class index it should become;
-# any raw value not listed here (including airway classes 1-2 and, here,
-# vein=4) collapses to background=0. This remapping happens once, in
-# transforms.py, so raw label files don't need to be pre-processed on disk.
-# Keys must match indices into CLASS_NAMES.
+# any raw value not listed here (including airway classes 1-2) collapses to
+# background=0. This remapping happens once, in transforms.py, so raw label
+# files don't need to be pre-processed on disk. Keys must match indices into
+# CLASS_NAMES.
 LABEL_CLASS_MAP = {
     3: CLASS_NAMES.index("artery"),
+    4: CLASS_NAMES.index("vein"),
 }
 
 # --- Geometry ---
