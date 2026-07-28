@@ -164,6 +164,29 @@ python inference.py \
   --input-dir path/to/images/
 ```
 
+## Comparing predictions from two models
+
+`compare_predictions.py` does a volume-by-volume comparison of two
+prediction sets (e.g. two checkpoints run over the same real-world
+images via `inference.py --output-suffix ...`), with no ground truth
+required. It pairs up files by filename suffix within each patient
+folder and, per class (plus a merged "vessel" class), computes Dice,
+clDice (topology/connectivity), HD95 + average surface distance (mm),
+volumes, and connected-component counts, writing one row per case x
+class to a CSV:
+
+```bash
+python compare_predictions.py \
+  --root-dir /data/flamant/data/ct/lidc_idri \
+  --suffix-a _vascular_pred_ct \
+  --suffix-b _vascular_pred2 \
+  --output prediction_comparison.csv
+```
+
+`--skip-surface` / `--skip-topology` drop the slower metrics (HD95/ASD
+and clDice/component counts, respectively) if you just want a quick
+Dice + volume pass first.
+
 ## Not included yet
 
 The two-stage training scheme (pretraining + hard-case fine-tuning) has been

@@ -4,3 +4,6 @@ pytorch-lightning
 tensorboard
 nibabel
 numpy
+scipy
+scikit-image
+pandas
