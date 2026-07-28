@@ -5,5 +5,4 @@ tensorboard
 nibabel
 numpy
 scipy
-scikit-image
 pandas

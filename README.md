@@ -171,7 +171,7 @@ prediction sets (e.g. two checkpoints run over the same real-world
 images via `inference.py --output-suffix ...`), with no ground truth
 required. It pairs up files by filename suffix within each patient
 folder and, per class (plus a merged "vessel" class), computes Dice,
-clDice (topology/connectivity), HD95 + average surface distance (mm),
+Normalized Surface Dice + HD95 + average surface distance (mm),
 volumes, and connected-component counts, writing one row per case x
 class to a CSV:
 
@@ -180,12 +180,17 @@ python compare_predictions.py \
   --root-dir /data/flamant/data/ct/lidc_idri \
   --suffix-a _vascular_pred_ct \
   --suffix-b _vascular_pred2 \
+  --swap-av-a \
   --output prediction_comparison.csv
 ```
 
-`--skip-surface` / `--skip-topology` drop the slower metrics (HD95/ASD
-and clDice/component counts, respectively) if you just want a quick
-Dice + volume pass first.
+`--swap-av-a` corrects for the known artery/vein inversion in the CT
+model's predictions (`_vascular_pred_ct`) before computing per-class
+metrics -- without it, artery/vein Dice will look near-zero even
+though the two models agree on vessel location (`--swap-av-b` is the
+equivalent flag for model B). `--skip-surface` / `--skip-topology`
+drop the slower metrics (NSD/HD95/ASD and component counts,
+respectively) if you just want a quick Dice + volume pass first.
 
 ## Not included yet
 

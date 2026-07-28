@@ -13,14 +13,22 @@ predictions, not accuracy against a reference. For each class (plus a
 merged "vessel" class = all foreground) it computes, per case:
 
 - Dice: voxel overlap.
-- clDice: centerline Dice (Shit et al., 2021), symmetrized between the
-  two masks -- sensitive to tree continuity/connectivity rather than
-  raw volume overlap, which matters for thin tubular vessels.
+- NSD: Normalized Surface Dice at a configurable tolerance (mm) -- the
+  fraction of each surface within tolerance of the other. More robust
+  than centerline (clDice) metrics here: clDice assumes a thin tubular
+  structure whose skeleton is a compact 1D curve, which breaks down
+  (skeleton degenerates into an unstable surface) on the thicker/more
+  fragmented regions present in these predictions.
 - HD95 / ASD: 95th-percentile Hausdorff distance and average symmetric
   surface distance (mm), i.e. how far the two segmented surfaces are
   from each other.
 - Volumes (mm^3) and their relative difference.
 - Number of connected components, as a rough fragmentation signal.
+
+Predictions from different checkpoints/configs may not agree on which
+raw class index means "artery" vs "vein" (e.g. a model trained with a
+swapped LABEL_CLASS_MAP) -- use --swap-av-a/--swap-av-b to correct for
+a known inversion in one of the two inputs before comparing.
 
 Writes one row per (case, class) to a long-format CSV.
 """
@@ -33,9 +41,12 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 import torch
-from monai.metrics import compute_average_surface_distance, compute_hausdorff_distance
+from monai.metrics import (
+    compute_average_surface_distance,
+    compute_hausdorff_distance,
+    compute_surface_dice,
+)
 from scipy.ndimage import label as connected_components
-from skimage.morphology import skeletonize
 
 import config as cfg
 
@@ -95,36 +106,16 @@ def dice(a, b):
     return float(2.0 * np.logical_and(a, b).sum() / denom)
 
 
-def cl_dice(a, b):
+def surface_metrics(a, b, spacing, nsd_tolerance_mm):
     """
-    Symmetric centerline Dice between two binary masks (Shit et al.,
-    2021). Used here pred-vs-pred (no ground truth available): each mask
-    stands in as the "reference" for the other's skeleton in turn, then
-    the two directional scores are harmonic-averaged.
-    """
-    if a.sum() == 0 and b.sum() == 0:
-        return 1.0
-    if a.sum() == 0 or b.sum() == 0:
-        return 0.0
-    skel_a = skeletonize(a)
-    skel_b = skeletonize(b)
-    t_prec = np.logical_and(skel_a, b).sum() / max(skel_a.sum(), 1)
-    t_sens = np.logical_and(skel_b, a).sum() / max(skel_b.sum(), 1)
-    if t_prec + t_sens == 0:
-        return 0.0
-    return float(2 * t_prec * t_sens / (t_prec + t_sens))
-
-
-def surface_metrics(a, b, spacing):
-    """
-    Returns (hd95_mm, asd_mm). NaN when one mask is empty and the other
-    isn't (distance to an empty set is undefined); (0.0, 0.0) when both
-    are empty (perfect, trivial agreement).
+    Returns (hd95_mm, asd_mm, nsd). NaN (and nsd=0.0) when one mask is
+    empty and the other isn't (distance to an empty set is undefined);
+    (0.0, 0.0, 1.0) when both are empty (perfect, trivial agreement).
     """
     if a.sum() == 0 and b.sum() == 0:
-        return 0.0, 0.0
+        return 0.0, 0.0, 1.0
     if a.sum() == 0 or b.sum() == 0:
-        return float("nan"), float("nan")
+        return float("nan"), float("nan"), 0.0
     at = torch.from_numpy(a[None, None]).float()
     bt = torch.from_numpy(b[None, None]).float()
     hd95 = compute_hausdorff_distance(
@@ -133,7 +124,10 @@ def surface_metrics(a, b, spacing):
     asd = compute_average_surface_distance(
         at, bt, include_background=True, symmetric=True, spacing=spacing
     ).item()
-    return hd95, asd
+    nsd = compute_surface_dice(
+        at, bt, class_thresholds=[nsd_tolerance_mm], include_background=True, spacing=spacing
+    ).item()
+    return hd95, asd, nsd
 
 
 def num_components(a):
@@ -141,7 +135,17 @@ def num_components(a):
     return int(n)
 
 
-def compare_pair(case_id, path_a, path_b, class_names, skip_surface, skip_topology):
+def swap_artery_vein(data, class_names):
+    """Swaps the raw label values of the "artery" and "vein" classes in place, to correct for a known inversion between the two models' class-index conventions."""
+    artery_idx = class_names.index("artery")
+    vein_idx = class_names.index("vein")
+    swapped = data.copy()
+    swapped[data == artery_idx] = vein_idx
+    swapped[data == vein_idx] = artery_idx
+    return swapped
+
+
+def compare_pair(case_id, path_a, path_b, class_names, swap_av_a, swap_av_b, skip_surface, skip_topology, nsd_tolerance_mm):
     data_a, spacing_a = load_label_volume(path_a)
     data_b, spacing_b = load_label_volume(path_b)
 
@@ -153,6 +157,11 @@ def compare_pair(case_id, path_a, path_b, class_names, skip_surface, skip_topolo
     if spacing_a != spacing_b:
         logging.warning(f"{case_id}: spacing mismatch {spacing_a} vs {spacing_b}, using {spacing_a}")
     voxel_volume_mm3 = float(np.prod(spacing_a))
+
+    if swap_av_a:
+        data_a = swap_artery_vein(data_a, class_names)
+    if swap_av_b:
+        data_b = swap_artery_vein(data_b, class_names)
 
     classes = [(idx, name) for idx, name in enumerate(class_names) if idx != 0]
     classes.append((None, "vessel"))  # merged foreground, all classes combined
@@ -177,12 +186,13 @@ def compare_pair(case_id, path_a, path_b, class_names, skip_surface, skip_topolo
         )
 
         if not skip_topology:
-            row["cldice"] = cl_dice(mask_a, mask_b)
             row["n_components_a"] = num_components(mask_a)
             row["n_components_b"] = num_components(mask_b)
 
         if not skip_surface:
-            row["hd95_mm"], row["asd_mm"] = surface_metrics(mask_a, mask_b, spacing_a)
+            row["hd95_mm"], row["asd_mm"], row["nsd"] = surface_metrics(
+                mask_a, mask_b, spacing_a, nsd_tolerance_mm
+            )
 
         rows.append(row)
     return rows
@@ -193,10 +203,13 @@ def main():
     parser.add_argument("--root-dir", required=True, help="Directory tree containing both prediction sets (searched recursively for **/*.nii.gz)")
     parser.add_argument("--suffix-a", default="_vascular_pred_ct", help="Filename suffix (before .nii.gz) identifying model A's predictions")
     parser.add_argument("--suffix-b", default="_vascular_pred2", help="Filename suffix (before .nii.gz) identifying model B's predictions")
+    parser.add_argument("--swap-av-a", action="store_true", help="Swap artery/vein class indices in model A's predictions before comparing (use if model A is known to invert them)")
+    parser.add_argument("--swap-av-b", action="store_true", help="Swap artery/vein class indices in model B's predictions before comparing")
     parser.add_argument("--class-names", nargs="+", default=None, help="Override class list (index 0 = background). Defaults to config.CLASS_NAMES")
     parser.add_argument("--output", default="prediction_comparison.csv", help="Output CSV path (long format: one row per case x class)")
-    parser.add_argument("--skip-surface", action="store_true", help="Skip HD95/ASD (slow on large volumes)")
-    parser.add_argument("--skip-topology", action="store_true", help="Skip clDice / connected-component counts")
+    parser.add_argument("--nsd-tolerance-mm", type=float, default=2.0, help="Tolerance (mm) for Normalized Surface Dice (default: 2.0)")
+    parser.add_argument("--skip-surface", action="store_true", help="Skip HD95/ASD/NSD (slow on large volumes)")
+    parser.add_argument("--skip-topology", action="store_true", help="Skip connected-component counts")
     args = parser.parse_args()
 
     class_names = args.class_names or cfg.CLASS_NAMES
@@ -213,14 +226,18 @@ def main():
     for i, (case_id, path_a, path_b, _folder) in enumerate(pairs, 1):
         logging.info(f"[{i}/{len(pairs)}] Comparing {case_id}")
         all_rows.extend(
-            compare_pair(case_id, path_a, path_b, class_names, args.skip_surface, args.skip_topology)
+            compare_pair(
+                case_id, path_a, path_b, class_names,
+                args.swap_av_a, args.swap_av_b,
+                args.skip_surface, args.skip_topology, args.nsd_tolerance_mm,
+            )
         )
 
     df = pd.DataFrame(all_rows)
     df.to_csv(args.output, index=False)
     logging.info(f"Wrote {len(df)} rows ({len(pairs)} cases x {df['class'].nunique()} classes) to {args.output}")
 
-    summary_cols = [c for c in ["dice", "cldice", "volume_diff_pct", "hd95_mm", "asd_mm"] if c in df.columns]
+    summary_cols = [c for c in ["dice", "nsd", "volume_diff_pct", "hd95_mm", "asd_mm"] if c in df.columns]
     summary = df.groupby("class")[summary_cols].agg(["mean", "std"])
     logging.info(f"Summary by class:\n{summary}")
 
