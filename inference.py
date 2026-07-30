@@ -149,6 +149,11 @@ def main():
         f"'{PRED_SUFFIX}2' -> <name>{PRED_SUFFIX}2.nii.gz. "
         f"Defaults to '{PRED_SUFFIX}'.",
     )
+    parser.add_argument(
+        "--cpu",
+        action="store_true",
+        help="Force inference on CPU, even if a GPU (CUDA/MPS) is available.",
+    )
     args = parser.parse_args()
 
     if bool(args.input) == bool(args.input_dir):
@@ -172,7 +177,9 @@ def main():
             for p in image_paths
         ]
 
-    if torch.cuda.is_available():
+    if args.cpu:
+        device = torch.device("cpu")
+    elif torch.cuda.is_available():
         device = torch.device("cuda")
     elif torch.backends.mps.is_available():
         device = torch.device("mps")
@@ -184,7 +191,15 @@ def main():
 
     for image_path, output_path in zip(image_paths, output_paths):
         logging.info(f"Running inference on {image_path}")
-        label_array, affine = predict_volume(image_path, model, cfg, device)
+        try:
+            label_array, affine = predict_volume(image_path, model, cfg, device)
+        except torch.cuda.OutOfMemoryError:
+            logging.warning(f"CUDA out of memory on {image_path}, retrying on CPU")
+            torch.cuda.empty_cache()
+            cpu_device = torch.device("cpu")
+            model = model.to(cpu_device)
+            device = cpu_device
+            label_array, affine = predict_volume(image_path, model, cfg, device)
         save_prediction(label_array, affine, output_path)
         logging.info(f"Wrote {output_path}")
 
