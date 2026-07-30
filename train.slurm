@@ -18,7 +18,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate flamant_segmentation
 
 # config.py reads these from the environment; nothing else needs to change.
-export MANIFEST_PATH="$SLURM_SUBMIT_DIR/manifest.json"
+export MANIFEST_PATH="$SLURM_SUBMIT_DIR/manifest_vibe.json"
 export DATASET_ROOT="/data/flamant/data/AirRC_runs/vessel_segmentation"  # TODO: persistent path for cache/checkpoints/logs
 
 echo "Node: $(hostname)"

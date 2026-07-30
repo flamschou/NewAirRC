@@ -14,7 +14,7 @@ MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 
-EXPERIMENT_NAME = "vessel_segmentation_vein_artery_ct_v1"
+EXPERIMENT_NAME = "vessel_segmentation_vein_artery_vibe_v1"
 
 # PersistentDataset's cache key is based only on item identity (image/label
 # paths), never on the transform pipeline itself -- changing any transform
