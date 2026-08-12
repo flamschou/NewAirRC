@@ -211,8 +211,9 @@ next to the input as `<name>_centerline.nii.gz`, on the input grid (so it
 overlays directly on the mask). `--paint generation|branch` colors it by
 generation or branch id instead of a binary mask. The other outputs are
 opt-in: `--csv` has one row per point (voxel index, world mm, radius),
-`--branches-csv` one row per branch (length, radius, generation), and
-`--vtk` a legacy polydata for Slicer/ParaView.
+`--branches-csv` one row per branch (length, chord, tortuosity, radii,
+generation), `--generations-csv` and `--bifurcations-csv` the two analysis
+tables below, and `--vtk` a legacy polydata for Slicer/ParaView.
 
 ```bash
 python centerline.py \
@@ -220,8 +221,31 @@ python centerline.py \
   --output artery_centerline.nii.gz \
   --csv centerline_points.csv \
   --branches-csv centerline_branches.csv \
+  --generations-csv centerline_generations.csv \
+  --bifurcations-csv centerline_bifurcations.csv \
   --vtk centerline.vtk
 ```
+
+### Anatomical report
+
+Every run prints a morphometric report (`--no-report` to skip it):
+
+- **per generation** — branch count, how many end there, total and mean
+  length, mean radius at the proximal end / distal end / over the branch,
+  tortuosity, and the mean radius at the tips of that generation.
+- **terminal branches** — the distribution of the tip radius, i.e. the
+  calibre at which the segmentation stops resolving vessels, plus the
+  length and depth of the leaves.
+- **bifurcations** — parent radius, area ratio (sum of the daughter
+  sections over the parent section), asymmetry (smallest daughter over
+  largest), the exponent of Murray's law (3 = optimal for laminar flow,
+  2 = cross-section conserved) and the angle between daughters. Radii and
+  directions are measured one junction diameter away from the junction,
+  where the vessels have separated again.
+- **tree** — tortuosity and length distributions, growth ratio up to the
+  widest generation, and the number of loops in the skeleton (two vessels
+  touching in the mask; they also shift the generations downstream, so a
+  high count means the segmentation should be checked).
 
 Use `--label 2` to
 isolate one class of a multi-class segmentation. Pruning is controlled by
