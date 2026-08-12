@@ -16,18 +16,20 @@ Pipeline:
     6. estimate a local radius at every centerline point from the distance
        transform, and index branches by generation from the trunk
 
-Outputs (all optional, at least one is recommended):
-    --output        nifti centerline mask, on the input grid
+Outputs:
+    --output        nifti centerline mask, on the input grid. Defaults to
+                    <input>_centerline.nii.gz next to the input mask
     --csv           one row per centerline point (voxel + world mm + radius)
     --branches-csv  one row per branch (length, radius, generation)
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
 Usage:
-    python centerline.py --input artery.nii.gz --output artery_centerline.nii.gz
+    python centerline.py --input artery.nii.gz
     python centerline.py --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
 """
 import argparse
 import itertools
+import os
 from collections import defaultdict, deque
 
 import networkx as nx
@@ -353,12 +355,26 @@ def write_vtk(path, ordered, positions, radii, affine):
         handle.write("\n".join(scalars) + "\n")
 
 
+CENTERLINE_SUFFIX = "_centerline"
+
+
+def default_output_path(mask_path, suffix=CENTERLINE_SUFFIX):
+    """"artery.nii.gz" -> "artery_centerline.nii.gz", in the same directory."""
+    directory, filename = os.path.split(mask_path)
+    if filename.endswith(".nii.gz"):
+        stem, ext = filename[: -len(".nii.gz")], ".nii.gz"
+    else:
+        stem, ext = os.path.splitext(filename)
+    return os.path.join(directory, f"{stem}{suffix}{ext}")
+
+
 # --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", required=True, help="Pulmonary artery mask (nifti)")
     parser.add_argument("--label", type=int, default=None, help="Label value to isolate. Default: any nonzero voxel")
-    parser.add_argument("--output", help="Centerline mask to write (nifti, input grid)")
+    parser.add_argument("--output", help="Centerline mask to write (nifti, input grid). Default: "
+                                         "<input>_centerline.nii.gz next to the input mask")
     parser.add_argument("--csv", help="Per-point CSV to write")
     parser.add_argument("--branches-csv", help="Per-branch CSV to write")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
@@ -403,7 +419,7 @@ def main():
     # the EDT stops at the last inside voxel centre, so the wall sits about
     # half a voxel further out
     radius_map = distance_transform_edt(work_mask, sampling=work_spacing) + 0.5 * work_spacing.min()
-    skeleton = skeletonize(work_mask)
+    skeleton = skeletonize(work_mask) > 0  # older skimage returns 0/255 uint8 in 3D
     print(f"skeleton: {int(skeleton.sum())} voxels")
 
     graph, positions = build_voxel_graph(skeleton, work_spacing)
@@ -430,10 +446,10 @@ def main():
     print(f"total centerline length: {lengths.sum():.1f} mm  (longest branch {lengths.max():.1f} mm)")
     print(f"generations: 0..{generations.max()}  radius: {radii.min():.2f}..{radii.max():.2f} mm")
 
-    if args.output:
-        volume = paint_centerline(ordered, positions, mask.shape, factors, args.paint)
-        nib.save(nib.Nifti1Image(volume, affine), args.output)
-        print(f"wrote {args.output} ({int((volume > 0).sum())} voxels, paint={args.paint})")
+    output = args.output or default_output_path(args.input)
+    volume = paint_centerline(ordered, positions, mask.shape, factors, args.paint)
+    nib.save(nib.Nifti1Image(volume, affine), output)
+    print(f"wrote {output} ({int((volume > 0).sum())} voxels, paint={args.paint})")
     if args.csv:
         write_points_csv(args.csv, ordered, positions, radii, work_affine, factors)
         print(f"wrote {args.csv}")
@@ -443,8 +459,6 @@ def main():
     if args.vtk:
         write_vtk(args.vtk, ordered, positions, radii, work_affine)
         print(f"wrote {args.vtk}")
-    if not any((args.output, args.csv, args.branches_csv, args.vtk)):
-        print("no output requested, use --output / --csv / --branches-csv / --vtk")
 
 
 if __name__ == "__main__":

@@ -203,6 +203,18 @@ a generation index counted from the trunk (the widest free end, or
 `--root i j k`).
 
 ```bash
+python centerline.py --input artery.nii.gz
+```
+
+Like `inference.py`, `--output` is optional: the centerline mask is written
+next to the input as `<name>_centerline.nii.gz`, on the input grid (so it
+overlays directly on the mask). `--paint generation|branch` colors it by
+generation or branch id instead of a binary mask. The other outputs are
+opt-in: `--csv` has one row per point (voxel index, world mm, radius),
+`--branches-csv` one row per branch (length, radius, generation), and
+`--vtk` a legacy polydata for Slicer/ParaView.
+
+```bash
 python centerline.py \
   --input artery.nii.gz \
   --output artery_centerline.nii.gz \
@@ -211,11 +223,7 @@ python centerline.py \
   --vtk centerline.vtk
 ```
 
-Every output is optional: `--output` is a nifti mask on the input grid
-(`--paint generation|branch` colors it by generation or branch id instead
-of a binary mask), `--csv` has one row per point (voxel index, world mm,
-radius), `--branches-csv` one row per branch (length, radius, generation),
-and `--vtk` a legacy polydata for Slicer/ParaView. Use `--label 2` to
+Use `--label 2` to
 isolate one class of a multi-class segmentation. Pruning is controlled by
 `--min-branch-length` (mm) and `--radius-factor` (a terminal branch shorter
 than that many local radii is a thinning artifact); raise them if the tree
