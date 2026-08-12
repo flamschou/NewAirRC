@@ -6,3 +6,5 @@ nibabel
 numpy
 scipy
 pandas
+scikit-image
+networkx

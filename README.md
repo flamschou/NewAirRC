@@ -192,6 +192,35 @@ equivalent flag for model B). `--skip-surface` / `--skip-topology`
 drop the slower metrics (NSD/HD95/ASD and component counts,
 respectively) if you just want a quick Dice + volume pass first.
 
+## Extracting a centerline
+
+`centerline.py` extracts the centerline (curve-skeleton) of a pulmonary
+artery mask: it cleans the mask up, resamples it to isotropic voxels so
+the skeleton is not biased by the slice thickness, thins it with Lee's 3D
+algorithm, then turns the skeleton into a branch graph -- junction clusters
+merged, short spurs pruned, a local radius from the distance transform, and
+a generation index counted from the trunk (the widest free end, or
+`--root i j k`).
+
+```bash
+python centerline.py \
+  --input artery.nii.gz \
+  --output artery_centerline.nii.gz \
+  --csv centerline_points.csv \
+  --branches-csv centerline_branches.csv \
+  --vtk centerline.vtk
+```
+
+Every output is optional: `--output` is a nifti mask on the input grid
+(`--paint generation|branch` colors it by generation or branch id instead
+of a binary mask), `--csv` has one row per point (voxel index, world mm,
+radius), `--branches-csv` one row per branch (length, radius, generation),
+and `--vtk` a legacy polydata for Slicer/ParaView. Use `--label 2` to
+isolate one class of a multi-class segmentation. Pruning is controlled by
+`--min-branch-length` (mm) and `--radius-factor` (a terminal branch shorter
+than that many local radii is a thinning artifact); raise them if the tree
+looks hairy, lower them to keep small distal vessels.
+
 ## Not included yet
 
 The two-stage training scheme (pretraining + hard-case fine-tuning) has been
