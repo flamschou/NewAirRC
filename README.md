@@ -212,8 +212,8 @@ overlays directly on the mask). `--paint generation|branch` colors it by
 generation or branch id instead of a binary mask. The other outputs are
 opt-in: `--csv` has one row per point (voxel index, world mm, radius),
 `--branches-csv` one row per branch (length, chord, tortuosity, radii,
-generation), `--generations-csv` and `--bifurcations-csv` the two analysis
-tables below, and `--vtk` a legacy polydata for Slicer/ParaView.
+generation, Strahler order), `--orders-csv` and `--bifurcations-csv` the two
+analysis tables below, and `--vtk` a legacy polydata for Slicer/ParaView.
 
 ```bash
 python centerline.py \
@@ -221,7 +221,7 @@ python centerline.py \
   --output artery_centerline.nii.gz \
   --csv centerline_points.csv \
   --branches-csv centerline_branches.csv \
-  --generations-csv centerline_generations.csv \
+  --orders-csv centerline_orders.csv \
   --bifurcations-csv centerline_bifurcations.csv \
   --vtk centerline.vtk
 ```
@@ -230,22 +230,54 @@ python centerline.py \
 
 Every run prints a morphometric report (`--no-report` to skip it):
 
-- **per generation** — branch count, how many end there, total and mean
-  length, mean radius at the proximal end / distal end / over the branch,
-  tortuosity, and the mean radius at the tips of that generation.
+- **per order** — branch count, how many end there, total and mean length,
+  mean radius at the proximal end / distal end / over the branch,
+  tortuosity, and the mean radius at the tips of that order. Followed by
+  the calibre monotonicity check (see below).
 - **terminal branches** — the distribution of the tip radius, i.e. the
   calibre at which the segmentation stops resolving vessels, plus the
   length and depth of the leaves.
-- **bifurcations** — parent radius, area ratio (sum of the daughter
-  sections over the parent section), asymmetry (smallest daughter over
-  largest), the exponent of Murray's law (3 = optimal for laminar flow,
-  2 = cross-section conserved) and the angle between daughters. Radii and
-  directions are measured one junction diameter away from the junction,
-  where the vessels have separated again.
+- **bifurcations** — parent radius, asymmetry (smallest daughter over
+  largest) and the angle between daughters, then the area ratio (sum of
+  the daughter sections over the parent section) and the exponent of
+  Murray's law (3 = optimal for laminar flow, 2 = cross-section conserved)
+  restricted to the junctions where the parent and both daughters are
+  wider than `--murray-min-voxels` voxels. Those two are ratios raised to
+  a power, so they are meaningless where the radius saturates on the voxel
+  size.
 - **tree** — tortuosity and length distributions, growth ratio up to the
   widest generation, and the number of loops in the skeleton (two vessels
   touching in the mask; they also shift the generations downstream, so a
   high count means the segmentation should be checked).
+
+### How branches are numbered
+
+Counting junctions from the root is not anatomical: a trunk giving off
+collaterals gets renumbered at every one of them, so the interlobar artery
+ends up labelled "generation 16" while still being the same vessel, and the
+radius stops decreasing with the number. `--ordering` picks between:
+
+- `generation` (default) — the main path: at a junction the widest daughter
+  keeps its parent's number, only the others are incremented.
+- `strahler` — counted up from the tips: a leaf is 1, and two branches of
+  equal order n meeting yield n+1.
+- `bfs_generation` — the raw junction count, kept for reference.
+
+All three are in `--branches-csv`. Under the first two the mean calibre must
+vary monotonically, which the report checks and reports explicitly: an
+inversion means a leak into a vein, two vessels fused by partial volume, or
+a wrong root, so it doubles as an automatic quality check.
+
+### Measurement caveats
+
+Lengths, tortuosities and angles are read on a smoothed centerline
+(`--smoothing`, `--max-shift`), never on the raw voxel path: a digitized
+path wobbles half a voxel around the true axis, which on an oblique tube
+adds ~12% to its length. Directions are fitted over 2.5 local radii by
+PCA -- over a couple of voxels they snap to the axes of the grid and pile
+the bifurcation angles up at 90 degrees. Radii come from the distance
+transform and are accurate to about half a voxel, which is enough for the
+calibre but propagates hard into Murray's exponent, hence the filter.
 
 Use `--label 2` to
 isolate one class of a multi-class segmentation. Pruning is controlled by

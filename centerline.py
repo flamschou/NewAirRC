@@ -13,14 +13,19 @@ Pipeline:
     4. thin the volume with Lee's 3D skeletonization
     5. turn the skeleton voxels into a graph, merge junction clusters and
        prune the short spurious side branches created by thinning
-    6. estimate a local radius at every centerline point from the distance
-       transform, and index branches by generation from the trunk
+    6. smooth the branches, within the digitization error, before measuring
+       anything: a raw voxel path is ~10% longer than the vessel it follows
+    7. estimate a local radius from the distance transform and number the
+       branches, either along the main path (the widest daughter continues
+       its parent) or by Strahler order -- see `compute_orders`
 
 Outputs:
     --output        nifti centerline mask, on the input grid. Defaults to
                     <input>_centerline.nii.gz next to the input mask
     --csv           one row per centerline point (voxel + world mm + radius)
-    --branches-csv  one row per branch (length, radius, generation)
+    --branches-csv  one row per branch (length, radii, generation, Strahler)
+    --orders-csv    one row per generation / Strahler order
+    --bifurcations-csv  one row per junction (angle, area ratio, Murray)
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
 Usage:
@@ -79,7 +84,7 @@ def resample_isotropic(mask, affine, spacing, target=None):
     target = float(spacing.min()) if target is None else float(target)
     factors = spacing / target
     if np.allclose(factors, 1.0, atol=1e-3):
-        return mask, affine, np.ones(3), np.array([1.0, 1.0, 1.0])
+        return mask, affine, np.ones(3), spacing.copy()
 
     resampled = zoom(mask.astype(np.uint8), factors, order=0, grid_mode=True, mode="nearest") > 0
 
@@ -302,32 +307,84 @@ def order_branches(graph, branches, positions, radii, root_voxel=None):
 # --------------------------------------------------------------------------- #
 # anatomical analysis
 # --------------------------------------------------------------------------- #
-def branch_geometry(nodes, world, radii, span_mm, from_start=True):
+def smooth_centerline(ordered, world, voxel_size, iterations=20, max_shift=None):
+    """
+    Smooths every branch, junctions pinned in place.
+
+    A digitized centerline wobbles by up to half a voxel around the true
+    axis, and measuring it step by step accumulates that wobble: on a
+    diagonal tube the raw polyline is ~25% longer than the vessel. Lengths,
+    tortuosities and directions must therefore be read on a smoothed curve.
+
+    Laplacian smoothing is applied, each point kept within `max_shift` of
+    where it started (half a voxel by default) so the correction stays
+    within the digitization error and real curvature survives. The two
+    endpoints never move, which keeps the branches connected at junctions.
+    """
+    max_shift = 0.5 * voxel_size if max_shift is None else max_shift
+    smooth = world.copy()
+    for nodes, _ in ordered:
+        if len(nodes) < 3:
+            continue
+        anchor = world[nodes]
+        points = anchor.copy()
+        for _ in range(iterations):
+            moved = points.copy()
+            moved[1:-1] += 0.5 * (points[:-2] + points[2:] - 2.0 * points[1:-1])
+            offset = moved - anchor
+            distance = np.linalg.norm(offset, axis=1, keepdims=True)
+            excess = distance > max_shift
+            points = np.where(excess, anchor + offset * (max_shift / np.maximum(distance, 1e-9)), moved)
+        smooth[nodes] = points
+    return smooth
+
+
+def polyline_length(points):
+    """Length of a polyline, in the units of its coordinates."""
+    return float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
+
+
+def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start=True):
     """
     Direction and calibre of a branch as seen from one of its ends.
 
-    Everything is measured `span_mm` away from that end -- one diameter of
-    the vessel meeting there -- because near a junction the branches merge
-    into a single blob: the radius is inflated by the neighbouring vessels
-    and the direction still bends out of the parent. The radius is the
-    median over [span, 2*span], falling back to the far end of the branch
-    when it is too short.
+    Both are measured away from that end, because at a junction the branches
+    merge into a single blob: the radius there is inflated by the
+    neighbouring vessels and the direction still bends out of the parent.
+    The two use different scales, and both are clamped to the branch so a
+    wide vessel is never measured at its far end:
+
+    - the direction is fitted over 2.5 local radii (at most half the
+      branch). Over a couple of voxels only it would snap to the axes of the
+      grid, which piles the bifurcation angles up at 90 degrees. It is the
+      first principal component of the points in that window, not the chord
+      to its last point, so every point contributes.
+    - the calibre is the median radius over [1, 2] local radii (at most the
+      proximal half of the branch), just past the junction blob and close
+      enough that the vessel has not tapered yet.
 
     Returns (unit direction leaving the end, radius in mm).
     """
-    order = nodes if from_start else nodes[::-1]
+    order = np.asarray(nodes if from_start else nodes[::-1])
     points = world[order]
     distance = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
+    total = float(distance[-1])
 
-    reach = min(int(np.searchsorted(distance, span_mm)), len(order) - 1)
-    vector = points[reach] - points[0]
-    norm = np.linalg.norm(vector)
-    direction = vector / norm if norm > 0 else np.zeros(3)
+    span = min(max(2.5 * float(junction_radius), 3.0 * voxel_size), max(0.5 * total, 3.0 * voxel_size))
+    sample = points[distance <= span]
+    if len(sample) < 2:
+        sample = points[:2]
+    axis = np.linalg.svd(sample - sample.mean(axis=0), full_matrices=False)[2][0]
+    # principal components have no sign: point it away from the junction
+    direction = axis * np.sign(np.dot(axis, sample[-1] - sample[0]) or 1.0)
 
-    window = (distance >= min(span_mm, distance[-1])) & (distance <= 2.0 * span_mm)
+    low = min(max(float(junction_radius), 2.0 * voxel_size), max(0.25 * total, 2.0 * voxel_size))
+    high = min(max(2.0 * float(junction_radius), low + 2.0 * voxel_size),
+               max(0.5 * total, low + 2.0 * voxel_size))
+    window = (distance >= min(low, total)) & (distance <= high)
     if not window.any():
-        window = distance >= min(span_mm, distance[-1])
-    return direction, float(np.median(radii[np.asarray(order)[window]]))
+        window = distance >= min(low, total)
+    return direction, float(np.median(radii[order[window]]))
 
 
 def murray_exponent(parent_radius, child_radii):
@@ -344,21 +401,30 @@ def murray_exponent(parent_radius, child_radii):
     return float(brentq(lambda n: np.sum(ratios ** n) - 1.0, 1e-3, 50.0))
 
 
-def branch_table(graph, ordered, world, radii):
+def branch_table(graph, ordered, smooth, radii, voxel_size):
     """
-    Per-branch measurements, in branch order (proximal -> distal).
+    Per-branch measurements, in branch order (proximal -> distal), read on
+    the smoothed centerline.
 
     Tortuosity is the ratio of the path length to the straight distance
-    between the two ends: 1.0 is a straight branch.
+    between the two ends: 1.0 is a straight branch. The proximal and distal
+    calibres are measured away from the junctions (see `branch_geometry`),
+    unlike `mean_radius_mm` which averages the whole branch.
     """
     table = []
     for branch_id, (nodes, generation) in enumerate(ordered):
-        length = path_length(graph, nodes)
-        chord = float(np.linalg.norm(world[nodes[-1]] - world[nodes[0]]))
+        points = smooth[nodes]
+        length = polyline_length(points)
+        chord = float(np.linalg.norm(points[-1] - points[0]))
         values = radii[nodes]
+
+        head_axis, head_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[0]], voxel_size)
+        tail_axis, tail_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[-1]], voxel_size,
+                                                  from_start=False)
+
         table.append({
             "branch_id": branch_id,
-            "generation": generation,
+            "bfs_generation": generation,
             "n_points": len(nodes),
             "length_mm": length,
             "chord_mm": chord,
@@ -366,78 +432,123 @@ def branch_table(graph, ordered, world, radii):
             "mean_radius_mm": float(values.mean()),
             "min_radius_mm": float(values.min()),
             "max_radius_mm": float(values.max()),
-            "proximal_radius_mm": float(radii[nodes[0]]),
-            "distal_radius_mm": float(radii[nodes[-1]]),
+            "proximal_calibre_mm": head_calibre,
+            "distal_calibre_mm": tail_calibre,
+            "tip_radius_mm": float(radii[nodes[-1]]),
             "is_terminal": int(graph.degree(nodes[-1]) == 1),
             "nodes": nodes,
+            "head_axis": head_axis,
+            "tail_axis": tail_axis,
         })
     return table
 
 
-def analyze_bifurcations(ordered, table, world, radii):
+def compute_orders(table):
+    """
+    Numbers the branches three ways, since the natural traversal order is
+    not the anatomical one.
+
+    - `bfs_generation` counts junctions from the root, so a trunk giving off
+      collaterals is renumbered at every one of them: the interlobar artery
+      ends up several "generations" deep while still being the same vessel.
+    - `generation` follows the main path: at a junction the widest daughter
+      inherits the parent's number and only the others are incremented, so
+      the number tracks the vessel, not the count of junctions passed.
+    - `strahler` orders from the periphery instead: a tip is 1, and a
+      junction of two branches of equal order n yields n+1, otherwise the
+      largest order carries through.
+
+    With `generation` or `strahler`, the mean calibre must vary
+    monotonically -- a violation means the tree leaks into a neighbouring
+    structure or two vessels have been fused.
+    """
+    starts = defaultdict(list)
+    for entry in table:
+        starts[entry["nodes"][0]].append(entry["branch_id"])
+    for entry in table:
+        entry["children"] = [c for c in starts.get(entry["nodes"][-1], []) if c != entry["branch_id"]]
+        entry["generation"] = None
+
+    by_depth = sorted(table, key=lambda e: e["bfs_generation"])
+    for entry in by_depth:
+        if entry["generation"] is None:
+            entry["generation"] = 0 if entry["bfs_generation"] == 0 else -1
+        if entry["generation"] < 0:
+            continue
+        children = entry["children"]
+        main = max(children, key=lambda c: table[c]["proximal_calibre_mm"], default=None)
+        for child in children:
+            table[child]["generation"] = entry["generation"] + (0 if child == main else 1)
+
+    for entry in reversed(by_depth):
+        orders = sorted((table[c].get("strahler", 1) for c in entry["children"]), reverse=True)
+        if not orders:
+            entry["strahler"] = 1
+        elif len(orders) > 1 and orders[0] == orders[1]:
+            entry["strahler"] = orders[0] + 1
+        else:
+            entry["strahler"] = orders[0]
+    return table
+
+
+def analyze_bifurcations(table, order_key, min_radius):
     """
     Measures every bifurcation: the parent branch that ends there and the
-    daughters that leave it.
+    daughters that leave it. Radii and directions come from the branch
+    table, i.e. measured a couple of radii away from the junction.
 
-    Returns one dict per junction with the parent/daughter radii, the area
-    ratio (sum of daughter sections over the parent section), Murray's
-    exponent and the angle between the two daughters.
+    `well_resolved` flags the junctions where the parent and every daughter
+    are wider than `min_radius` (a few voxels). Below that the radii
+    saturate on the voxel size and the derived quantities -- the area ratio
+    and above all Murray's exponent, which is a ratio raised to a power --
+    stop meaning anything.
     """
-    parent_of = {}
-    children_of = defaultdict(list)
-    for branch_id, (nodes, _) in enumerate(ordered):
-        parent_of[nodes[-1]] = branch_id
-        children_of[nodes[0]].append(branch_id)
-
     bifurcations = []
-    for node, children in children_of.items():
-        if node not in parent_of or len(children) < 2:
+    for parent in table:
+        children = [table[c] for c in parent["children"]]
+        if len(children) < 2:
             continue
-        parent = table[parent_of[node]]
-        # one junction diameter is the scale over which the vessels separate
-        span = max(4.0, 2.0 * float(radii[node]))
-        _, parent_radius = branch_geometry(parent["nodes"], world, radii, span, from_start=False)
-        geometry = [branch_geometry(table[c]["nodes"], world, radii, span) for c in children]
-        directions = [d for d, _ in geometry]
-        child_radii = [r for _, r in geometry]
+        parent_radius = parent["distal_calibre_mm"]
+        child_radii = [c["proximal_calibre_mm"] for c in children]
 
         angle = None
         if len(children) == 2:
-            cosine = float(np.clip(np.dot(directions[0], directions[1]), -1.0, 1.0))
+            cosine = float(np.clip(np.dot(children[0]["head_axis"], children[1]["head_axis"]), -1.0, 1.0))
             angle = float(np.degrees(np.arccos(cosine)))
 
         bifurcations.append({
-            "node": node,
-            "generation": parent["generation"],
+            "node": parent["nodes"][-1],
+            "order": parent[order_key],
             "n_children": len(children),
             "parent_radius_mm": parent_radius,
-            "child_radii_mm": sorted(child_radii, reverse=True),
+            "min_child_radius_mm": float(min(child_radii)),
             "area_ratio": float(np.sum(np.square(child_radii)) / parent_radius ** 2) if parent_radius > 0 else None,
             "asymmetry": float(min(child_radii) / max(child_radii)) if max(child_radii) > 0 else None,
             "murray_exponent": murray_exponent(parent_radius, child_radii),
             "angle_deg": angle,
+            "well_resolved": int(min(parent_radius, *child_radii) >= min_radius),
         })
     return bifurcations
 
 
-def generation_table(table):
-    """Aggregates the branch measurements generation by generation."""
+def order_summary(table, order_key):
+    """Aggregates the branch measurements order by order."""
     rows = []
-    for generation in sorted({b["generation"] for b in table}):
-        branches = [b for b in table if b["generation"] == generation]
+    for order in sorted({b[order_key] for b in table}):
+        branches = [b for b in table if b[order_key] == order]
         terminal = [b for b in branches if b["is_terminal"]]
         lengths = np.array([b["length_mm"] for b in branches])
         rows.append({
-            "generation": generation,
+            "order": order,
             "n_branches": len(branches),
             "n_terminal": len(terminal),
             "total_length_mm": float(lengths.sum()),
             "mean_length_mm": float(lengths.mean()),
             "mean_radius_mm": float(np.mean([b["mean_radius_mm"] for b in branches])),
-            "mean_proximal_radius_mm": float(np.mean([b["proximal_radius_mm"] for b in branches])),
-            "mean_distal_radius_mm": float(np.mean([b["distal_radius_mm"] for b in branches])),
+            "mean_proximal_calibre_mm": float(np.mean([b["proximal_calibre_mm"] for b in branches])),
+            "mean_distal_calibre_mm": float(np.mean([b["distal_calibre_mm"] for b in branches])),
             "mean_tortuosity": float(np.mean([b["tortuosity"] for b in branches])),
-            "mean_tip_radius_mm": float(np.mean([b["distal_radius_mm"] for b in terminal])) if terminal else None,
+            "mean_tip_radius_mm": float(np.mean([b["tip_radius_mm"] for b in terminal])) if terminal else None,
         })
     return rows
 
@@ -452,26 +563,54 @@ def describe(values):
             f"p10-p90 {p10:5.2f}-{p90:5.2f}  range {values.min():5.2f}-{values.max():5.2f}")
 
 
-def print_analysis(graph, table, generations, bifurcations):
-    """Prints the anatomical report: per generation, leaves, bifurcations."""
-    print("\n=== branches per generation ===")
-    print("gen    n  term   length_mm  mean_len  mean_rad  prox_rad  dist_rad  tort  tip_rad")
-    for row in generations:
+def check_monotonicity(rows, order_key):
+    """
+    Lists the orders whose calibre goes the wrong way.
+
+    Along the main path a vessel can only narrow, and a Strahler order can
+    only widen. Any inversion is a defect of the segmentation -- a leak into
+    a neighbouring vein, two vessels fused by partial volume -- or a
+    mis-rooted tree, so this doubles as a quality check.
+    """
+    rows = [row for row in rows if row["order"] >= 0]
+    if order_key == "strahler":
+        rows = rows[::-1]
+    return [(before["order"], after["order"], before["mean_radius_mm"], after["mean_radius_mm"])
+            for before, after in zip(rows, rows[1:]) if after["mean_radius_mm"] > before["mean_radius_mm"]]
+
+
+def print_analysis(graph, table, summary, bifurcations, order_key, min_radius):
+    """Prints the anatomical report: per order, leaves, bifurcations, tree."""
+    label = {"generation": "generation (main path)", "strahler": "Strahler order",
+             "bfs_generation": "generation (junctions from the root)"}[order_key]
+    print(f"\n=== branches per {label} ===")
+    print("ord    n  term   length_mm  mean_len  mean_rad  prox_cal  dist_cal  tort  tip_rad")
+    for row in summary:
         tip = f"{row['mean_tip_radius_mm']:7.2f}" if row["mean_tip_radius_mm"] is not None else "      -"
-        print(f"{row['generation']:3d} {row['n_branches']:4d} {row['n_terminal']:5d} "
+        print(f"{row['order']:3d} {row['n_branches']:4d} {row['n_terminal']:5d} "
               f"{row['total_length_mm']:11.1f} {row['mean_length_mm']:9.1f} "
-              f"{row['mean_radius_mm']:9.2f} {row['mean_proximal_radius_mm']:9.2f} "
-              f"{row['mean_distal_radius_mm']:9.2f} {row['mean_tortuosity']:5.2f} {tip}")
+              f"{row['mean_radius_mm']:9.2f} {row['mean_proximal_calibre_mm']:9.2f} "
+              f"{row['mean_distal_calibre_mm']:9.2f} {row['mean_tortuosity']:5.2f} {tip}")
+
+    inversions = check_monotonicity(summary, order_key)
+    if inversions:
+        print(f"calibre monotonicity: VIOLATED at {len(inversions)} step(s) -- " +
+              ", ".join(f"{a}->{b} ({ra:.2f} -> {rb:.2f} mm)" for a, b, ra, rb in inversions))
+        print("  a vessel cannot widen downstream: check for a leak into a vein, "
+              "two vessels fused, or a wrong root")
+    else:
+        print("calibre monotonicity: ok (radius decreases at every step)")
 
     leaves = [b for b in table if b["is_terminal"]]
     print(f"\n=== terminal branches ({len(leaves)} leaves) ===")
     if leaves:
-        print(f"tip radius (mm)   : {describe([b['distal_radius_mm'] for b in leaves])}")
+        print(f"tip radius (mm)   : {describe([b['tip_radius_mm'] for b in leaves])}")
         print(f"mean radius (mm)  : {describe([b['mean_radius_mm'] for b in leaves])}")
         print(f"length (mm)       : {describe([b['length_mm'] for b in leaves])}")
-        print(f"generation        : {describe([b['generation'] for b in leaves])}")
+        print(f"order             : {describe([b[order_key] for b in leaves])}")
 
     junctions = sum(1 for _, d in graph.degree() if d >= 3)
+    resolved = [b for b in bifurcations if b["well_resolved"]]
     print(f"\n=== bifurcations ({len(bifurcations)} measured / {junctions} junctions) ===")
     if bifurcations:
         daughters = [b["n_children"] for b in bifurcations]
@@ -479,49 +618,59 @@ def print_analysis(graph, table, generations, bifurcations):
         print(f"daughters per junction: mean {np.mean(daughters):.2f} "
               f"({trifurcations} junctions with more than 2)")
         print(f"parent radius (mm): {describe([b['parent_radius_mm'] for b in bifurcations])}")
-        print(f"area ratio        : {describe([b['area_ratio'] for b in bifurcations])}")
         print(f"asymmetry ratio   : {describe([b['asymmetry'] for b in bifurcations])}")
-        print(f"Murray exponent   : {describe([b['murray_exponent'] for b in bifurcations])}")
         print(f"angle (deg)       : {describe([b['angle_deg'] for b in bifurcations])}")
+        print(f"\nrestricted to the {len(resolved)} bifurcations where the parent and both "
+              f"daughters exceed {min_radius:.2f} mm:")
+        if resolved:
+            print(f"area ratio        : {describe([b['area_ratio'] for b in resolved])}")
+            print(f"Murray exponent   : {describe([b['murray_exponent'] for b in resolved])}")
+            print(f"angle (deg)       : {describe([b['angle_deg'] for b in resolved])}")
+        else:
+            print("  none -- the mask does not resolve any vessel well enough")
 
     print("\n=== tree ===")
     lengths = np.array([b["length_mm"] for b in table])
     print(f"tortuosity        : {describe([b['tortuosity'] for b in table])}")
     print(f"branch length (mm): {describe(lengths)}")
-    reachable = [row for row in generations if row["generation"] >= 0]
-    if len(reachable) > 1:
-        # geometric growth up to the widest generation: past that peak the
-        # tree stops splitting and the ratio only measures how it dies out
+    reachable = [row for row in summary if row["order"] >= 0]
+    if order_key != "strahler" and len(reachable) > 1:
+        # geometric growth up to the widest order: past that peak the tree
+        # stops splitting and the ratio only measures how it dies out
         peak = max(range(len(reachable)), key=lambda k: reachable[k]["n_branches"])
         if peak > 0:
             growth = (reachable[peak]["n_branches"] / reachable[0]["n_branches"]) ** (1.0 / peak)
-            print(f"growth ratio      : {growth:.2f} branches per generation "
-                  f"up to gen {reachable[peak]['generation']} (widest)")
+            print(f"growth ratio      : {growth:.2f} branches per {order_key} "
+                  f"up to {reachable[peak]['order']} (widest)")
     cycles = graph.number_of_edges() - graph.number_of_nodes() + nx.number_connected_components(graph)
     if cycles:
         print(f"loops             : {cycles} cycle(s) in the skeleton -- vessels touching each "
               f"other in the mask, which also shifts the generations downstream")
-    orphans = next((row for row in generations if row["generation"] < 0), None)
+    orphans = next((row for row in summary if row["order"] < 0), None)
     if orphans:
         print(f"unreachable from the root: {orphans['n_branches']} branches "
-              f"({orphans['total_length_mm']:.1f} mm), reported as generation -1")
+              f"({orphans['total_length_mm']:.1f} mm), reported as order -1")
 
 
 # --------------------------------------------------------------------------- #
 # writers
 # --------------------------------------------------------------------------- #
-def paint_centerline(ordered, positions, shape, factors, mode="binary"):
+def paint_centerline(table, positions, shape, factors, mode="binary"):
     """
     Rasterizes the branches onto a volume of the given shape, joining
     consecutive points with a discrete 3D line so the result stays connected
     even when the working grid is finer than the output grid.
+
+    Voxel positions are the raw skeleton ones, not the smoothed curve: the
+    output has to land on the voxels of the mask.
     """
     volume = np.zeros(shape, dtype=np.uint8)
-    for branch_id, (path, generation) in enumerate(ordered):
-        # unreachable branches (generation -1) are painted 255 rather than dropped
-        value = {"binary": 1, "generation": generation + 1 if generation >= 0 else 255,
-                 "branch": branch_id % 255 + 1}[mode]
-        voxels = np.rint((positions[path] + 0.5) / factors - 0.5).astype(int)
+    for entry in table:
+        order = entry["order"]
+        # unreachable branches (order -1) are painted 255 rather than dropped
+        value = {"binary": 1, "order": order + 1 if order >= 0 else 255,
+                 "branch": entry["branch_id"] % 255 + 1}[mode]
+        voxels = np.rint((positions[entry["nodes"]] + 0.5) / factors - 0.5).astype(int)
         voxels = np.clip(voxels, 0, np.array(shape) - 1)
         for start, stop in zip(voxels, voxels[1:]):
             volume[line_nd(start, stop, endpoint=True)] = value
@@ -529,17 +678,22 @@ def paint_centerline(ordered, positions, shape, factors, mode="binary"):
     return volume
 
 
-def write_points_csv(path, ordered, positions, radii, affine, factors):
-    """One row per centerline point, in branch order."""
-    rows = ["branch_id,generation,point_index,i,j,k,x_mm,y_mm,z_mm,radius_mm"]
-    for branch_id, (nodes, generation) in enumerate(ordered):
-        voxels = positions[nodes]
-        world = voxels @ affine[:3, :3].T + affine[:3, 3]
-        source = np.rint((voxels + 0.5) / factors - 0.5).astype(int)
+def write_points_csv(path, table, positions, smooth, radii, factors):
+    """
+    One row per centerline point, in branch order.
+
+    The voxel indices are those of the skeleton on the input grid, the
+    millimetre coordinates those of the smoothed curve.
+    """
+    rows = ["branch_id,order,strahler,point_index,i,j,k,x_mm,y_mm,z_mm,radius_mm"]
+    for entry in table:
+        nodes = entry["nodes"]
+        source = np.rint((positions[nodes] + 0.5) / factors - 0.5).astype(int)
         for k, node in enumerate(nodes):
             i, j, l = source[k]
-            x, y, z = world[k]
-            rows.append(f"{branch_id},{generation},{k},{i},{j},{l},{x:.3f},{y:.3f},{z:.3f},{radii[node]:.3f}")
+            x, y, z = smooth[node]
+            rows.append(f"{entry['branch_id']},{entry['order']},{entry['strahler']},{k},"
+                        f"{i},{j},{l},{x:.3f},{y:.3f},{z:.3f},{radii[node]:.3f}")
     with open(path, "w") as handle:
         handle.write("\n".join(rows) + "\n")
 
@@ -556,24 +710,25 @@ def write_table_csv(path, table, columns):
         handle.write("\n".join(rows) + "\n")
 
 
-BRANCH_COLUMNS = ("branch_id", "generation", "n_points", "length_mm", "chord_mm", "tortuosity",
+BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "bfs_generation", "n_points",
+                  "length_mm", "chord_mm", "tortuosity",
                   "mean_radius_mm", "min_radius_mm", "max_radius_mm",
-                  "proximal_radius_mm", "distal_radius_mm", "is_terminal")
+                  "proximal_calibre_mm", "distal_calibre_mm", "tip_radius_mm", "is_terminal")
 
-GENERATION_COLUMNS = ("generation", "n_branches", "n_terminal", "total_length_mm", "mean_length_mm",
-                      "mean_radius_mm", "mean_proximal_radius_mm", "mean_distal_radius_mm",
-                      "mean_tortuosity", "mean_tip_radius_mm")
+ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm", "mean_length_mm",
+                 "mean_radius_mm", "mean_proximal_calibre_mm", "mean_distal_calibre_mm",
+                 "mean_tortuosity", "mean_tip_radius_mm")
 
-BIFURCATION_COLUMNS = ("node", "generation", "n_children", "parent_radius_mm",
-                       "area_ratio", "asymmetry", "murray_exponent", "angle_deg")
+BIFURCATION_COLUMNS = ("node", "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
+                       "area_ratio", "asymmetry", "murray_exponent", "angle_deg", "well_resolved")
 
 
-def write_vtk(path, ordered, positions, radii, affine):
+def write_vtk(path, table, smooth, radii):
     """Legacy ASCII VTK polydata: one polyline per branch, radius as scalar."""
     points, lines, scalars, offset = [], [], [], 0
-    for nodes, _ in ordered:
-        world = positions[nodes] @ affine[:3, :3].T + affine[:3, 3]
-        points.extend(f"{x:.4f} {y:.4f} {z:.4f}" for x, y, z in world)
+    for entry in table:
+        nodes = entry["nodes"]
+        points.extend(f"{x:.4f} {y:.4f} {z:.4f}" for x, y, z in smooth[nodes])
         scalars.extend(f"{radii[n]:.4f}" for n in nodes)
         lines.append(" ".join(str(v) for v in [len(nodes), *range(offset, offset + len(nodes))]))
         offset += len(nodes)
@@ -608,12 +763,26 @@ def main():
                                          "<input>_centerline.nii.gz next to the input mask")
     parser.add_argument("--csv", help="Per-point CSV to write")
     parser.add_argument("--branches-csv", help="Per-branch CSV to write")
-    parser.add_argument("--generations-csv", help="Per-generation CSV to write")
+    parser.add_argument("--orders-csv", help="Per-order (generation or Strahler) CSV to write")
     parser.add_argument("--bifurcations-csv", help="Per-bifurcation CSV to write")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
     parser.add_argument("--no-report", action="store_true", help="Skip the printed anatomical report")
-    parser.add_argument("--paint", choices=("binary", "generation", "branch"), default="binary",
+    parser.add_argument("--ordering", choices=("generation", "strahler", "bfs_generation"), default="generation",
+                        help="How branches are numbered in the report and in --paint order. "
+                             "generation: the widest daughter continues the parent (main path); "
+                             "strahler: counted up from the tips; "
+                             "bfs_generation: raw junction count from the root. Default: generation")
+    parser.add_argument("--paint", choices=("binary", "order", "branch"), default="binary",
                         help="Voxel value in the output mask. Default: binary")
+    parser.add_argument("--smoothing", type=int, default=20,
+                        help="Laplacian smoothing iterations on the centerline before measuring "
+                             "lengths and angles. 0 measures the raw voxel path. Default: 20")
+    parser.add_argument("--max-shift", type=float, default=None,
+                        help="How far (mm) smoothing may move a point. Default: half a voxel")
+    parser.add_argument("--murray-min-voxels", type=float, default=3.0,
+                        help="Murray's exponent and the area ratio are only summarized over the "
+                             "bifurcations whose parent and daughters are wider than this many "
+                             "voxels. Default: 3")
     parser.add_argument("--min-branch-length", type=float, default=3.0,
                         help="Terminal branches shorter than this (mm) are pruned. Default: 3")
     parser.add_argument("--radius-factor", type=float, default=1.0,
@@ -673,39 +842,46 @@ def main():
         root_voxel = np.asarray(args.root, float) * factors + 0.5 * (factors - 1.0)
     ordered = order_branches(graph, branches, positions, radii, root_voxel)
 
+    voxel_size = float(work_spacing.min())
     world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
-    table = branch_table(graph, ordered, world, radii)
-    generations = generation_table(table)
-    bifurcations = analyze_bifurcations(ordered, table, world, radii)
+    smooth = smooth_centerline(ordered, world, voxel_size, args.smoothing, args.max_shift)
+    table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size))
+    for entry in table:
+        entry["order"] = entry[args.ordering]
+    summary = order_summary(table, "order")
+    bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size)
 
     lengths = np.array([b["length_mm"] for b in table])
-    depth = max(row["generation"] for row in generations)
+    raw = sum(polyline_length(world[b["nodes"]]) for b in table)
     endpoints = sum(1 for _, d in graph.degree() if d == 1)
     junctions = sum(1 for _, d in graph.degree() if d >= 3)
     print(f"branches: {len(table)}  endpoints: {endpoints}  junctions: {junctions}")
-    print(f"total centerline length: {lengths.sum():.1f} mm  (longest branch {lengths.max():.1f} mm)")
-    print(f"generations: 0..{depth}  radius: {radii.min():.2f}..{radii.max():.2f} mm")
+    print(f"total centerline length: {lengths.sum():.1f} mm  (longest branch {lengths.max():.1f} mm, "
+          f"raw voxel path {raw:.1f} mm)")
+    print(f"{args.ordering}: {min(r['order'] for r in summary)}..{max(r['order'] for r in summary)}  "
+          f"radius: {radii.min():.2f}..{radii.max():.2f} mm")
     if not args.no_report:
-        print_analysis(graph, table, generations, bifurcations)
+        print_analysis(graph, table, summary, bifurcations, args.ordering,
+                       args.murray_min_voxels * voxel_size)
 
     output = args.output or default_output_path(args.input)
-    volume = paint_centerline(ordered, positions, mask.shape, factors, args.paint)
+    volume = paint_centerline(table, positions, mask.shape, factors, args.paint)
     nib.save(nib.Nifti1Image(volume, affine), output)
     print(f"wrote {output} ({int((volume > 0).sum())} voxels, paint={args.paint})")
     if args.csv:
-        write_points_csv(args.csv, ordered, positions, radii, work_affine, factors)
+        write_points_csv(args.csv, table, positions, smooth, radii, factors)
         print(f"wrote {args.csv}")
     if args.branches_csv:
         write_table_csv(args.branches_csv, table, BRANCH_COLUMNS)
         print(f"wrote {args.branches_csv}")
-    if args.generations_csv:
-        write_table_csv(args.generations_csv, generations, GENERATION_COLUMNS)
-        print(f"wrote {args.generations_csv}")
+    if args.orders_csv:
+        write_table_csv(args.orders_csv, summary, ORDER_COLUMNS)
+        print(f"wrote {args.orders_csv}")
     if args.bifurcations_csv:
         write_table_csv(args.bifurcations_csv, bifurcations, BIFURCATION_COLUMNS)
         print(f"wrote {args.bifurcations_csv}")
     if args.vtk:
-        write_vtk(args.vtk, ordered, positions, radii, work_affine)
+        write_vtk(args.vtk, table, smooth, radii)
         print(f"wrote {args.vtk}")
 
 
