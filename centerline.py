@@ -63,14 +63,20 @@ def load_mask(path, label=None):
     return np.ascontiguousarray(mask, dtype=bool), img.affine, spacing
 
 
-def keep_largest_component(mask):
-    """Drops every connected component but the biggest one (26-connectivity)."""
+def component_volume_fraction(mask):
+    """
+    Number of connected components (26-connectivity) and the share of the
+    mask volume held by the largest one.
+
+    Volume is the optimistic view of fragmentation: a single fat trunk
+    outweighs hundreds of broken peripheral twigs. The same fraction
+    measured on centerline length, where every branch counts the same,
+    is the honest one -- see `component_lengths`.
+    """
     components, n_components = connected_components(mask, structure=np.ones((3, 3, 3), dtype=int))
-    if n_components <= 1:
-        return mask, n_components
     sizes = np.bincount(components.ravel())
     sizes[0] = 0
-    return components == int(sizes.argmax()), n_components
+    return n_components, float(sizes.max()) / float(mask.sum())
 
 
 def resample_isotropic(mask, affine, spacing, target=None):
@@ -238,6 +244,24 @@ def prune_spurs(graph, radii, min_length, radius_factor=1.0, max_iterations=20):
         graph.remove_nodes_from(doomed)
         total_removed += len(doomed)
     return total_removed
+
+
+def component_lengths(graph):
+    """
+    Total branch length of every connected component, longest first.
+
+    Measured on the skeleton of the whole mask, before it is restricted to
+    its main component: the point is precisely to weigh what is about to be
+    thrown away. Lengths are the raw voxel paths, which inflates them all by
+    the same ~10%, so their ratio is unaffected.
+
+    Returns a list of (length in mm, set of nodes).
+    """
+    parts = []
+    for nodes in nx.connected_components(graph):
+        length = float(sum(d["weight"] for _, _, d in graph.subgraph(nodes).edges(data=True)))
+        parts.append((length, nodes))
+    return sorted(parts, key=lambda part: -part[0])
 
 
 def drop_small_components(graph, min_length):
@@ -553,6 +577,127 @@ def order_summary(table, order_key):
     return rows
 
 
+def resolution_floor(voxel_size):
+    """
+    Smallest radius the distance transform can return, in mm.
+
+    A skeleton voxel one step away from the background is at exactly one
+    voxel from it, and the half-voxel wall correction is added on top, so
+    nothing can be reported below 1.5 voxels. A tip sitting on that value
+    is not a measurement, it is the grid.
+    """
+    return 1.5 * voxel_size
+
+
+def find_breakpoints(table, positions, smooth, factors, max_order, min_radius):
+    """
+    Terminal branches that stop too early: a low order (still close to the
+    main path) yet a calibre well above the resolution floor.
+
+    A vessel several millimetres wide does not simply end -- the tree is
+    broken there, and these tips are the most likely attachment points of
+    the fragments that the largest-component filter drops. Unlike every
+    other metric here this one localizes: it returns coordinates to open in
+    a viewer.
+
+    Ordering is always the main-path one, since under Strahler every leaf
+    is order 1 by construction.
+    """
+    breakpoints = []
+    for entry in table:
+        if not entry["is_terminal"] or entry["generation"] < 0:
+            continue
+        if entry["generation"] > max_order or entry["tip_radius_mm"] <= min_radius:
+            continue
+        tip = entry["nodes"][-1]
+        i, j, k = np.rint((positions[tip] + 0.5) / factors - 0.5).astype(int)
+        x, y, z = smooth[tip]
+        breakpoints.append({
+            "branch_id": entry["branch_id"], "generation": entry["generation"],
+            "strahler": entry["strahler"], "tip_radius_mm": entry["tip_radius_mm"],
+            "length_mm": entry["length_mm"], "i": int(i), "j": int(j), "k": int(k),
+            "x_mm": float(x), "y_mm": float(y), "z_mm": float(z),
+        })
+    return sorted(breakpoints, key=lambda b: -b["tip_radius_mm"])
+
+
+def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
+                    n_volume_components, voxel_size, min_radius, max_order):
+    """
+    The five numbers that say whether a segmentation can be trusted.
+
+    They are independent on purpose: 1 and 4 are topological (is the tree in
+    one piece, and does it wrongly loop back on itself), 2 says how deep it
+    goes, 3 whether the vessels have a plausible calibre, 5 where it breaks.
+    A defect in one implies nothing about the others.
+    """
+    total_length = sum(length for length, _ in parts)
+    leaves = [b for b in table if b["is_terminal"]]
+    floor = resolution_floor(voxel_size)
+    at_floor = [b for b in leaves if b["tip_radius_mm"] <= floor * 1.001]
+    murray = np.array([b["murray_exponent"] for b in bifurcations
+                       if b["well_resolved"] and b["murray_exponent"] is not None])
+    cycles = graph.number_of_edges() - graph.number_of_nodes() + nx.number_connected_components(graph)
+
+    return {
+        "n_components": len(parts),
+        "n_volume_components": n_volume_components,
+        "largest_component_volume_fraction": volume_fraction,
+        "largest_component_length_fraction": parts[0][0] / total_length if total_length else 0.0,
+        "length_outside_largest_mm": total_length - parts[0][0],
+        "n_fragments_over_10mm": sum(1 for length, _ in parts[1:] if length >= 10.0),
+        "n_leaves": len(leaves),
+        "resolution_floor_mm": floor,
+        "leaves_at_floor_fraction": len(at_floor) / len(leaves) if leaves else 0.0,
+        "n_murray": int(murray.size),
+        "murray_median": float(np.median(murray)) if murray.size else None,
+        "murray_q1": float(np.percentile(murray, 25)) if murray.size else None,
+        "murray_q3": float(np.percentile(murray, 75)) if murray.size else None,
+        "n_cycles": int(cycles),
+        "n_breakpoints": len(breakpoints),
+        "breakpoints_fraction": len(breakpoints) / len(leaves) if leaves else 0.0,
+        "breakpoint_min_radius_mm": min_radius,
+        "breakpoint_max_order": max_order,
+    }
+
+
+def print_quality(metrics, breakpoints):
+    """Prints the five quality metrics, then the worst breakpoints."""
+    def line(label, value, comment):
+        print(f"{label:<48}: {value:>6}   {comment}")
+
+    print("\n=== quality metrics ===")
+    line("1. centerline length in the largest component",
+         f"{metrics['largest_component_length_fraction']:.1%}",
+         f"({metrics['length_outside_largest_mm']:.0f} mm outside, {metrics['n_components']} components, "
+         f"{metrics['n_fragments_over_10mm']} of them over 10 mm)")
+    line("   the same fraction measured on mask volume",
+         f"{metrics['largest_component_volume_fraction']:.1%}",
+         "(optimistic: the trunks weigh more than the twigs)")
+    line(f"2. leaves at the resolution floor ({metrics['resolution_floor_mm']:.2f} mm)",
+         f"{metrics['leaves_at_floor_fraction']:.1%}",
+         f"({round(metrics['leaves_at_floor_fraction'] * metrics['n_leaves'])}/{metrics['n_leaves']} leaves; "
+         f"near 100% the image is the limit, well below it the model stops early)")
+    if metrics["murray_median"] is not None:
+        line("3. Murray exponent, vessels over 3 voxels",
+             f"{metrics['murray_median']:.2f}",
+             f"(IQR {metrics['murray_q1']:.2f}-{metrics['murray_q3']:.2f}, n={metrics['n_murray']}; "
+             f"3 is the optimum, the mean is meaningless here)")
+    else:
+        line("3. Murray exponent, vessels over 3 voxels", "-", "(no bifurcation resolved well enough)")
+    line("4. cycles in the skeleton", f"{metrics['n_cycles']}",
+         "(an artery tree has no anastomosis, expected 0)")
+    line(f"5. leaves ending early (order <= {metrics['breakpoint_max_order']}, "
+         f"r > {metrics['breakpoint_min_radius_mm']:.2f} mm)",
+         f"{metrics['n_breakpoints']}", f"({metrics['breakpoints_fraction']:.1%} of leaves)")
+    for entry in breakpoints[:5]:
+        print(f"     r={entry['tip_radius_mm']:5.2f} mm  order {entry['generation']}  "
+              f"voxel ({entry['i']}, {entry['j']}, {entry['k']})  "
+              f"world ({entry['x_mm']:.1f}, {entry['y_mm']:.1f}, {entry['z_mm']:.1f}) mm")
+    if len(breakpoints) > 5:
+        print(f"     ... {len(breakpoints) - 5} more, use --breakpoints-csv for the full list")
+
+
 def describe(values):
     """mean / median / p10 / p90 / range of a sample, as a printable string."""
     values = np.asarray([v for v in values if v is not None], float)
@@ -722,6 +867,15 @@ ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm", "mean_l
 BIFURCATION_COLUMNS = ("node", "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
                        "area_ratio", "asymmetry", "murray_exponent", "angle_deg", "well_resolved")
 
+BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "length_mm",
+                      "i", "j", "k", "x_mm", "y_mm", "z_mm")
+
+QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volume_fraction",
+                   "length_outside_largest_mm", "n_components", "n_fragments_over_10mm",
+                   "leaves_at_floor_fraction", "n_leaves", "resolution_floor_mm",
+                   "murray_median", "murray_q1", "murray_q3", "n_murray",
+                   "n_cycles", "n_breakpoints", "breakpoints_fraction")
+
 
 def write_vtk(path, table, smooth, radii):
     """Legacy ASCII VTK polydata: one polyline per branch, radius as scalar."""
@@ -765,6 +919,8 @@ def main():
     parser.add_argument("--branches-csv", help="Per-branch CSV to write")
     parser.add_argument("--orders-csv", help="Per-order (generation or Strahler) CSV to write")
     parser.add_argument("--bifurcations-csv", help="Per-bifurcation CSV to write")
+    parser.add_argument("--breakpoints-csv", help="CSV of the leaves that end too early, with their coordinates")
+    parser.add_argument("--quality-csv", help="Single-row CSV of the quality metrics, to concatenate over cases")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
     parser.add_argument("--no-report", action="store_true", help="Skip the printed anatomical report")
     parser.add_argument("--ordering", choices=("generation", "strahler", "bfs_generation"), default="generation",
@@ -779,6 +935,11 @@ def main():
                              "lengths and angles. 0 measures the raw voxel path. Default: 20")
     parser.add_argument("--max-shift", type=float, default=None,
                         help="How far (mm) smoothing may move a point. Default: half a voxel")
+    parser.add_argument("--breakpoint-order", type=int, default=1,
+                        help="A terminal branch at this main-path order or below is suspect. Default: 1")
+    parser.add_argument("--breakpoint-radius", type=float, default=None,
+                        help="...provided its tip is wider than this (mm), i.e. it cannot just be "
+                             "the tree fading out. Default: 2 voxels")
     parser.add_argument("--murray-min-voxels", type=float, default=3.0,
                         help="Murray's exponent and the area ratio are only summarized over the "
                              "bifurcations whose parent and daughters are wider than this many "
@@ -804,9 +965,10 @@ def main():
     print(f"mask: {args.input}  shape={mask.shape}  spacing={np.round(spacing, 3).tolist()} mm")
     print(f"mask volume: {int(mask.sum())} voxels ({mask.sum() * np.prod(spacing) / 1000.0:.2f} mL)")
 
-    if not args.all_components:
-        mask, n_components = keep_largest_component(mask)
-        print(f"connected components: {n_components}, kept the largest ({int(mask.sum())} voxels)")
+    # the mask is skeletonized whole: restricting it to its main component
+    # before thinning would hide how much centerline is being dropped
+    n_volume_components, volume_fraction = component_volume_fraction(mask)
+    print(f"connected components: {n_volume_components}, largest holds {volume_fraction:.1%} of the volume")
     if not args.no_fill_holes:
         filled = binary_fill_holes(mask)
         print(f"filled {int(filled.sum() - mask.sum())} cavity voxels")
@@ -831,10 +993,18 @@ def main():
     radii = radius_map[tuple(np.rint(positions).astype(int).T)]
 
     pruned = prune_spurs(graph, radii, args.min_branch_length, args.radius_factor)
-    dropped = drop_small_components(graph, args.min_component_length)
-    print(f"pruned {pruned} spur voxels, dropped {dropped} small components")
     if graph.number_of_nodes() == 0:
-        raise SystemExit("nothing left after pruning, lower --min-branch-length / --min-component-length")
+        raise SystemExit("nothing left after pruning, lower --min-branch-length")
+
+    # measure the fragmentation before dropping anything, then restrict
+    parts = component_lengths(graph)
+    if not args.all_components:
+        graph.remove_nodes_from(set().union(*(nodes for _, nodes in parts[1:])) if len(parts) > 1 else [])
+    dropped = drop_small_components(graph, args.min_component_length)
+    print(f"pruned {pruned} spur voxels, kept {graph.number_of_nodes()} skeleton voxels "
+          f"in {nx.number_connected_components(graph)} component(s), dropped {dropped} short ones")
+    if graph.number_of_nodes() == 0:
+        raise SystemExit("nothing left, lower --min-component-length")
 
     branches = extract_branches(graph)
     root_voxel = None
@@ -864,6 +1034,15 @@ def main():
         print_analysis(graph, table, summary, bifurcations, args.ordering,
                        args.murray_min_voxels * voxel_size)
 
+    breakpoint_radius = args.breakpoint_radius
+    if breakpoint_radius is None:
+        breakpoint_radius = 2.0 * voxel_size
+    breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
+                                   breakpoint_radius)
+    metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
+                              n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order)
+    print_quality(metrics, breakpoints)
+
     output = args.output or default_output_path(args.input)
     volume = paint_centerline(table, positions, mask.shape, factors, args.paint)
     nib.save(nib.Nifti1Image(volume, affine), output)
@@ -880,6 +1059,12 @@ def main():
     if args.bifurcations_csv:
         write_table_csv(args.bifurcations_csv, bifurcations, BIFURCATION_COLUMNS)
         print(f"wrote {args.bifurcations_csv}")
+    if args.breakpoints_csv:
+        write_table_csv(args.breakpoints_csv, breakpoints, BREAKPOINT_COLUMNS)
+        print(f"wrote {args.breakpoints_csv}")
+    if args.quality_csv:
+        write_table_csv(args.quality_csv, [metrics], QUALITY_COLUMNS)
+        print(f"wrote {args.quality_csv}")
     if args.vtk:
         write_vtk(args.vtk, table, smooth, radii)
         print(f"wrote {args.vtk}")

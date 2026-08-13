@@ -250,6 +250,53 @@ Every run prints a morphometric report (`--no-report` to skip it):
   touching in the mask; they also shift the generations downstream, so a
   high count means the segmentation should be checked).
 
+### Quality metrics
+
+Printed at the end of every run, even with `--no-report`, and exportable as
+a single CSV row with `--quality-csv` so cases can be concatenated and
+compared. They are independent on purpose: a defect in one implies nothing
+about the others.
+
+```
+=== quality metrics ===
+1. centerline length in the largest component :  94.2%   (687 mm outside, 31 components, 10 of them over 10 mm)
+   the same fraction measured on mask volume  :  97.5%   (optimistic: the trunks weigh more than the twigs)
+2. leaves at the resolution floor (1.50 mm)   :  86.8%   (336/387 leaves; ...)
+3. Murray exponent, vessels over 3 voxels     :   2.29   (IQR 1.62-3.72, n=17; ...)
+4. cycles in the skeleton                     :      2   (an artery tree has no anastomosis, expected 0)
+5. leaves ending early (order <= 1, r > 2.00 mm):     1   (0.3% of leaves)
+     r= 2.50 mm  order 0  voxel (144, 101, 213)  world (16.0, -19.5, 85.0) mm
+```
+
+1. **Continuity.** An artery tree is one connected object; everything
+   outside its main component is a cut branch or a false positive. Measured
+   on centerline length, where every branch counts the same, and not on
+   volume, where a fat trunk hides hundreds of broken twigs -- both are
+   printed so the gap is visible. This is why the mask is skeletonized
+   whole and only then restricted to its main component.
+2. **Depth.** How far down the segmentation goes. The median tip radius
+   cannot answer that: it saturates at 1.5 voxels, which is the grid, not
+   the model. The share of leaves *sitting* on that floor can -- near 100%
+   the image is the limit and the model uses all the resolution available,
+   well below it the model stops early and is itself the limit.
+3. **Calibre.** The only indicator here that catches over-segmentation, a
+   leak into a neighbouring structure or two vessels fused: topology alone
+   would accept a correctly connected but systematically too thick tree.
+   Median and IQR only, never the mean, and only over vessels wider than
+   `--murray-min-voxels` voxels (below that the radius is quantized and the
+   exponent is noise).
+4. **Cycles (beta 1).** Zero is expected: arteries do not anastomose. Any
+   cycle is two branches touching in the mask -- artery to artery, or worse
+   a bridge to a vein -- and it corrupts every order downstream, so it
+   contaminates the other metrics too. Report the raw count per case.
+5. **Breakpoints.** Terminal branches still close to the main path
+   (`--breakpoint-order`) yet several millimetres wide
+   (`--breakpoint-radius`): a vessel that size does not simply end. This is
+   the only metric that localizes -- it prints the worst offenders and
+   `--breakpoints-csv` exports all of them with voxel and world
+   coordinates, ready to open in a viewer. They are the likely attachment
+   points of the fragments counted by metric 1.
+
 ### How branches are numbered
 
 Counting junctions from the root is not anatomical: a trunk giving off
