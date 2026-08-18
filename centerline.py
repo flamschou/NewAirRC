@@ -32,6 +32,8 @@ Outputs:
     --orders-csv    one row per order
     --ratios-csv    R_b / R_d / R_l with their confidence intervals
     --bifurcations-csv  one row per junction (angle, area ratio, Murray)
+    --orphans-csv   one row per component outside the main tree, with its
+                    wall-to-wall distance to it and where to look
     --sweep-csv     the ratios against the pruning strength, one row per k
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
@@ -54,6 +56,7 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes, distance_transform_edt, zoom
 from scipy.ndimage import label as connected_components
 from scipy.optimize import brentq
+from scipy.spatial import cKDTree
 from scipy.stats import t as student_t
 from skimage.draw import line_nd
 from skimage.morphology import skeletonize
@@ -906,6 +909,28 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
     return {"selection": selection, "rows": rows, "orders": orders, "fits": fits}
 
 
+def count_peak(rows, rise=1.2):
+    """
+    The order at which the branch count peaks, if it peaks in the middle.
+
+    A truncated tree counted in generations does not give a decreasing N: it
+    gives a hump, because the deep generations are cut off before the tree
+    would naturally thin out. Fitting a line through that returns a slope,
+    an R_b and even an R2, all of which describe the parabola and not the
+    tree. Worth refusing out loud rather than printing.
+
+    Returns None when the count is monotone, or when the rise before the
+    peak is too small to matter.
+    """
+    counts = [row["n_branches"] for row in rows]
+    if len(counts) < 3:
+        return None
+    peak = int(np.argmax(counts))
+    if peak == 0 or peak == len(counts) - 1 or counts[peak] < rise * counts[0]:
+        return None
+    return rows[peak]["order"]
+
+
 def print_ratios(result, ordering, counting):
     """Prints the ratio table, with what the fit rests on underneath it."""
     rows = result["rows"]
@@ -931,10 +956,19 @@ def print_ratios(result, ordering, counting):
     thin = [row["order"] for row in rows if row["n_branches"] < 3]
     if thin:
         print(f"  note: order(s) {', '.join(str(o) for o in thin)} rest on fewer than 3 branches")
+
+    peak = count_peak(rows)
+    if peak is not None:
+        print(f"  WARNING: N rises to order {peak} before falling. R_b is the slope of a straight "
+              f"line, and this is a hump -- the fitted value is an artefact of the fit, whatever "
+              f"its R2 says. It is the normal signature of a truncated tree counted in "
+              f"generations: either order by Strahler, or start the range past the peak")
     if ORDER_DIRECTION[ordering] < 0:
-        print(f"  note: {ordering} counts away from the trunk. The ratios are still per step "
-              f"towards it, but the published values are Strahler-ordered -- use "
-              f"--ordering strahler_dd to compare with them")
+        print(f"  WARNING: {ordering} counts one bifurcation per step, a Strahler order counts "
+              f"several -- the order only rises where two branches of equal order meet. The "
+              f"three ratios are therefore mechanically smaller here than their Strahler "
+              f"counterparts on the very same tree, and are NOT comparable to published values. "
+              f"Use --ordering strahler_dd before interpreting any of them")
 
 
 def ratio_rows(result, ordering, counting):
@@ -1002,9 +1036,128 @@ def find_breakpoints(table, positions, smooth, factors, max_order, min_radius):
     return sorted(breakpoints, key=lambda b: -b["tip_radius_mm"])
 
 
+def analyze_orphans(parts, positions, world, radii, factors, wall_gap):
+    """
+    Describes every component that is not the main one, and above all how far
+    each sits from it.
+
+    The fraction of centerline outside the main component says how much of the
+    tree is not analysed. It does not say why, and the two possible reasons
+    call for opposite corrections:
+
+      - a break in continuity. The fragment is real vessel, the model simply
+        lost a few voxels of contrast somewhere upstream. It sits a
+        millimetre or two from the main tree, wall to wall, usually in line
+        with a branch that ends abruptly. The fix is upstream connectivity
+        (a bridging term in the loss, a morphological closing) and the model
+        is better than the report suggests.
+      - a false positive. The fragment is somewhere else entirely, often
+        thin, often nowhere near a vessel end. The fix is specificity, and
+        the model is worse than the report suggests.
+
+    So the distance to the main component is the discriminating measurement,
+    and it is reported wall to wall, not centreline to centreline: two
+    vessels whose axes are 4 mm apart are touching if both are 2 mm across.
+    `gap_wall_mm` is that distance, floored at zero, and `wall_gap` is the
+    threshold under which a fragment is counted as bridgeable.
+
+    Coordinates of both ends of the gap are given on the input grid, so each
+    one can be opened directly in a viewer -- which is the only way to settle
+    the ambiguous ones.
+
+    Returns one row per orphan, longest first.
+    """
+    if len(parts) < 2:
+        return []
+
+    main = np.array(sorted(parts[0][1]))
+    tree = cKDTree(world[main])
+    rows = []
+    for index, (length, nodes) in enumerate(parts[1:], start=1):
+        nodes = np.array(sorted(nodes))
+        distance, nearest = tree.query(world[nodes])
+        closest = int(np.argmin(distance))
+        orphan_node = int(nodes[closest])
+        main_node = int(main[nearest[closest]])
+        axis_gap = float(distance[closest])
+        values = radii[nodes]
+
+        def voxel(node):
+            return np.rint((positions[node] + 0.5) / factors - 0.5).astype(int)
+
+        i, j, k = voxel(orphan_node)
+        mi, mj, mk = voxel(main_node)
+        rows.append({
+            "component_id": index,
+            "length_mm": float(length),
+            "n_points": int(len(nodes)),
+            "median_radius_mm": float(np.median(values)),
+            "max_radius_mm": float(values.max()),
+            "gap_axis_mm": axis_gap,
+            "gap_wall_mm": max(0.0, axis_gap - float(radii[orphan_node]) - float(radii[main_node])),
+            "i": int(i), "j": int(j), "k": int(k),
+            "main_i": int(mi), "main_j": int(mj), "main_k": int(mk),
+        })
+
+    for row in rows:
+        row["bridgeable"] = int(row["gap_wall_mm"] <= wall_gap)
+    return sorted(rows, key=lambda row: -row["length_mm"])
+
+
+def orphan_split(orphans, min_length=0.0):
+    """Totals of the orphan components on each side of the bridgeable line."""
+    kept = [row for row in orphans if row["length_mm"] >= min_length]
+    bridgeable = [row for row in kept if row["bridgeable"]]
+    isolated = [row for row in kept if not row["bridgeable"]]
+    return {
+        "n_bridgeable": len(bridgeable), "n_isolated": len(isolated),
+        "length_bridgeable_mm": float(sum(row["length_mm"] for row in bridgeable)),
+        "length_isolated_mm": float(sum(row["length_mm"] for row in isolated)),
+        "median_radius_bridgeable_mm": float(np.median([r["median_radius_mm"] for r in bridgeable]))
+        if bridgeable else None,
+        "median_radius_isolated_mm": float(np.median([r["median_radius_mm"] for r in isolated]))
+        if isolated else None,
+    }
+
+
+def print_orphans(orphans, wall_gap, min_length=10.0, show=8):
+    """Prints the two populations of orphan components and the worst of them."""
+    if not orphans:
+        return
+    total = orphan_split(orphans)
+    substantial = [row for row in orphans if row["length_mm"] >= min_length]
+    big = orphan_split(substantial)
+
+    print(f"\n=== orphan components ({len(orphans)} outside the main tree) ===")
+    print(f"broken off (wall gap <= {wall_gap:.1f} mm): {total['n_bridgeable']:4d} components, "
+          f"{total['length_bridgeable_mm']:8.1f} mm"
+          + (f", median radius {total['median_radius_bridgeable_mm']:.2f} mm"
+             if total["median_radius_bridgeable_mm"] is not None else ""))
+    print(f"isolated   (wall gap >  {wall_gap:.1f} mm): {total['n_isolated']:4d} components, "
+          f"{total['length_isolated_mm']:8.1f} mm"
+          + (f", median radius {total['median_radius_isolated_mm']:.2f} mm"
+             if total["median_radius_isolated_mm"] is not None else ""))
+    print(f"  of the {len(substantial)} over {min_length:.0f} mm: {big['n_bridgeable']} broken off "
+          f"({big['length_bridgeable_mm']:.0f} mm), {big['n_isolated']} isolated "
+          f"({big['length_isolated_mm']:.0f} mm)")
+    print("  broken off means the model lost continuity and the fix is upstream; isolated means "
+          "false positives and the fix is specificity. Open a few of each before deciding")
+
+    if substantial:
+        print("  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis  fragment voxel      nearest on trunk")
+        for row in substantial[:show]:
+            print(f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
+                  f"{row['max_radius_mm']:6.2f} {row['gap_wall_mm']:9.2f} {row['gap_axis_mm']:9.2f}  "
+                  f"({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
+                  f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
+        if len(substantial) > show:
+            print(f"  ... {len(substantial) - show} more over {min_length:.0f} mm, "
+                  f"use --orphans-csv for the full list")
+
+
 def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                     n_volume_components, voxel_size, min_radius, max_order,
-                    n_cycles=0, n_cycles_broken=0):
+                    n_cycles=0, n_cycles_broken=0, orphans=()):
     """
     The five numbers that say whether a segmentation can be trusted.
 
@@ -1027,6 +1180,10 @@ def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fract
         "largest_component_length_fraction": parts[0][0] / total_length if total_length else 0.0,
         "length_outside_largest_mm": total_length - parts[0][0],
         "n_fragments_over_10mm": sum(1 for length, _ in parts[1:] if length >= 10.0),
+        "n_orphans_bridgeable": orphan_split(orphans)["n_bridgeable"],
+        "n_orphans_isolated": orphan_split(orphans)["n_isolated"],
+        "orphan_length_bridgeable_mm": orphan_split(orphans)["length_bridgeable_mm"],
+        "orphan_length_isolated_mm": orphan_split(orphans)["length_isolated_mm"],
         "n_leaves": len(leaves),
         "resolution_floor_mm": floor,
         "leaves_at_floor_fraction": len(at_floor) / len(leaves) if leaves else 0.0,
@@ -1052,7 +1209,9 @@ def print_quality(metrics, breakpoints):
     line("1. centerline length in the largest component",
          f"{metrics['largest_component_length_fraction']:.1%}",
          f"({metrics['length_outside_largest_mm']:.0f} mm outside, {metrics['n_components']} components, "
-         f"{metrics['n_fragments_over_10mm']} of them over 10 mm)")
+         f"{metrics['n_fragments_over_10mm']} of them over 10 mm; "
+         f"{metrics['orphan_length_bridgeable_mm']:.0f} mm broken off, "
+         f"{metrics['orphan_length_isolated_mm']:.0f} mm isolated)")
     line("   the same fraction measured on mask volume",
          f"{metrics['largest_component_volume_fraction']:.1%}",
          "(optimistic: the trunks weigh more than the twigs)")
@@ -1249,8 +1408,14 @@ RATIO_COLUMNS = ("ratio", "ordering", "counting", "value", "ci_low", "ci_high", 
 BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "length_mm",
                       "i", "j", "k", "x_mm", "y_mm", "z_mm")
 
+ORPHAN_COLUMNS = ("component_id", "length_mm", "n_points", "median_radius_mm", "max_radius_mm",
+                  "gap_axis_mm", "gap_wall_mm", "bridgeable",
+                  "i", "j", "k", "main_i", "main_j", "main_k")
+
 QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volume_fraction",
                    "length_outside_largest_mm", "n_components", "n_fragments_over_10mm",
+                   "n_orphans_bridgeable", "n_orphans_isolated",
+                   "orphan_length_bridgeable_mm", "orphan_length_isolated_mm",
                    "leaves_at_floor_fraction", "n_leaves", "resolution_floor_mm",
                    "murray_median", "murray_q1", "murray_q3", "n_murray",
                    "n_cycles", "n_cycles_broken", "n_breakpoints", "breakpoints_fraction")
@@ -1433,6 +1598,8 @@ def main():
     parser.add_argument("--ratios-csv", help="R_b / R_d / R_l with their confidence intervals")
     parser.add_argument("--bifurcations-csv", help="Per-bifurcation CSV to write")
     parser.add_argument("--breakpoints-csv", help="CSV of the leaves that end too early, with their coordinates")
+    parser.add_argument("--orphans-csv", help="One row per component outside the main tree, with "
+                                              "its distance to the tree and its coordinates")
     parser.add_argument("--quality-csv", help="Single-row CSV of the quality metrics, to concatenate over cases")
     parser.add_argument("--sweep-csv", help="Ratios against the pruning strength, one row per k")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
@@ -1484,6 +1651,9 @@ def main():
                         help="Also prune a terminal branch shorter than this many local radii. 0 disables. Default: 1")
     parser.add_argument("--min-component-length", type=float, default=10.0,
                         help="Skeleton components shorter than this (mm) are dropped. Default: 10")
+    parser.add_argument("--orphan-gap", type=float, default=3.0,
+                        help="A component whose wall is within this many mm of the main tree is "
+                             "counted as broken off rather than as a false positive. Default: 3")
     parser.add_argument("--keep-cycles", action="store_true",
                         help="Do not cut the loops of the skeleton. They are artefacts and they make "
                              "the Strahler orders downstream of them meaningless, so this is for "
@@ -1580,10 +1750,12 @@ def main():
         breakpoint_radius = 2.0 * voxel_size
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
+    orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
-                              result["cycles"], len(result["broken"]))
+                              result["cycles"], len(result["broken"]), orphans)
     print_quality(metrics, breakpoints)
+    print_orphans(orphans, args.orphan_gap)
 
     output = args.output or default_output_path(args.input)
     volume = paint_centerline(table, positions, mask.shape, factors, args.paint)
@@ -1612,6 +1784,9 @@ def main():
     if args.breakpoints_csv:
         write_table_csv(args.breakpoints_csv, breakpoints, BREAKPOINT_COLUMNS)
         print(f"wrote {args.breakpoints_csv}")
+    if args.orphans_csv:
+        write_table_csv(args.orphans_csv, orphans, ORPHAN_COLUMNS)
+        print(f"wrote {args.orphans_csv}")
     if args.quality_csv:
         write_table_csv(args.quality_csv, [metrics], QUALITY_COLUMNS)
         print(f"wrote {args.quality_csv}")

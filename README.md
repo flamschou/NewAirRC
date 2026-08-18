@@ -214,8 +214,8 @@ generation or branch id instead of a binary mask. The other outputs are
 opt-in: `--csv` has one row per point (voxel index, world mm, radius),
 `--branches-csv` one row per segment (length, chord, tortuosity, radii, all
 four orderings), `--elements-csv` one row per element, `--orders-csv`,
-`--ratios-csv`, `--bifurcations-csv` and `--sweep-csv` the analysis tables
-below, and `--vtk` a legacy polydata for Slicer/ParaView.
+`--ratios-csv`, `--bifurcations-csv`, `--orphans-csv` and `--sweep-csv` the
+analysis tables below, and `--vtk` a legacy polydata for Slicer/ParaView.
 
 ```bash
 python centerline.py \
@@ -293,6 +293,31 @@ about the others.
    `E - N + components`, so zero means the graph really is a forest. The
    loops are then cut so the tree can be ordered at all, and how many were
    cut is reported next to the count.
+### Orphan components
+
+Metric 1 says how much of the tree is not analysed. It does not say why, and
+the two reasons call for opposite corrections: a **break in continuity** (real
+vessel, the model lost a few voxels of contrast, the fix is upstream
+connectivity) or a **false positive** (the fix is specificity). The
+discriminating measurement is the distance to the main tree, so it is
+reported per component, wall to wall rather than centreline to centreline —
+two vessels whose axes are 4 mm apart are touching if both are 2 mm across.
+
+```
+=== orphan components (39 outside the main tree) ===
+broken off (wall gap <= 3.0 mm):   11 components,     55.2 mm, median radius 1.50 mm
+isolated   (wall gap >  3.0 mm):   28 components,    408.2 mm, median radius 1.50 mm
+  of the 13 over 10 mm: 1 broken off (19 mm), 12 isolated (364 mm)
+  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis  fragment voxel      nearest on trunk
+    80.2     59   1.91   2.74      9.22     13.64  (  73,  68, 176)  (  72,  72, 189)
+    78.3     57   1.91   2.50      3.81      7.81  ( 184, 156, 128)  ( 178, 160, 125)
+```
+
+`--orphan-gap` sets the threshold (3 mm). Both ends of each gap are printed
+as input-grid voxels so they open directly in a viewer, which is the only way
+to settle the ambiguous ones; `--orphans-csv` exports all of them, and the
+two totals go into `--quality-csv`.
+
 5. **Breakpoints.** Terminal branches still close to the main path
    (`--breakpoint-order`) yet several millimetres wide
    (`--breakpoint-radius`): a vessel that size does not simply end. This is
@@ -364,6 +389,21 @@ range, R², the 95% t interval on the slope carried through the same
 exponential, and N per order so it is visible when a fit rests on two
 branches. With five or six usable orders those intervals are wide; that
 width is the result, not a failure.
+
+**These numbers are not comparable to the literature unless the ordering is
+Strahler.** A generation step is one bifurcation; a Strahler step is several,
+because the order only rises where two branches of equal order meet. On one
+and the same tree, the three ratios counted in generations are therefore
+mechanically smaller than their Strahler counterparts, and an R_d of 1,3
+against a published 1,56 may be entirely the ordering. The report warns
+loudly when a peripheral ordering is selected.
+
+The other warning to watch for: counted in generations, a truncated tree
+gives N rising and then falling — a hump, not a line — because the deep
+generations are cut off before the tree would naturally thin out. Fitting a
+slope through that returns an R_b, an interval and an R², all describing the
+parabola. The report detects the interior peak and says so; either order by
+Strahler or start the range past the peak.
 
 The three are fitted over **one** range of orders, not three, so they stay
 comparable. Fix that range with `--fit-orders MIN MAX` before looking at the
