@@ -34,6 +34,7 @@ Outputs:
     --bifurcations-csv  one row per junction (angle, area ratio, Murray)
     --orphans-csv   one row per component outside the main tree, with its
                     wall-to-wall distance to it and where to look
+    --bridge-csv    the bridging curve: centerline recovered per dilation radius
     --sweep-csv     the ratios against the pruning strength, one row per k
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
@@ -41,6 +42,7 @@ Usage:
     python centerline.py --input artery.nii.gz
     python centerline.py --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
     python centerline.py --input artery.nii.gz --ordering strahler_dd --fit-orders 1 6
+    python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 --bridge-sweep
 
 See phantom.py for the calibration tree that says how much of what this
 prints is anatomy and how much is the voxel size.
@@ -906,7 +908,8 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
                         for bound in (fit["slope_low"], fit["slope_high"]))
         fits[name] = dict(fit, ratio=10.0 ** (sign * direction * fit["slope"]),
                           ratio_low=bounds[0], ratio_high=bounds[1])
-    return {"selection": selection, "rows": rows, "orders": orders, "fits": fits}
+    return {"selection": selection, "rows": rows, "orders": orders, "fits": fits,
+            "min_diameter": min_diameter}
 
 
 def count_peak(rows, rise=1.2):
@@ -956,6 +959,16 @@ def print_ratios(result, ordering, counting):
     thin = [row["order"] for row in rows if row["n_branches"] < 3]
     if thin:
         print(f"  note: order(s) {', '.join(str(o) for o in thin)} rest on fewer than 3 branches")
+
+    floor = result["min_diameter"]
+    edge = min(rows, key=lambda row: row["mean_diameter_mm"])
+    if floor > 0 and edge["mean_diameter_mm"] <= 1.15 * floor:
+        print(f"  WARNING: order {edge['order']} sits on the censoring boundary "
+              f"({edge['mean_diameter_mm']:.2f} mm against a floor of {floor:.2f} mm). The radius "
+              f"there is not merely imprecise, it is truncated from below -- the distance "
+              f"transform cannot return less than 1.5 voxels, so that order's diameter is the "
+              f"grid, not the vessel, and it anchors the steep end of every fit. Pre-specify a "
+              f"range that stops one order earlier and check the ratios do not move")
 
     peak = count_peak(rows)
     if peak is not None:
@@ -1036,7 +1049,106 @@ def find_breakpoints(table, positions, smooth, factors, max_order, min_radius):
     return sorted(breakpoints, key=lambda b: -b["tip_radius_mm"])
 
 
-def analyze_orphans(parts, positions, world, radii, factors, wall_gap):
+def bridging_curve(parts, positions, mask, spacing, dilations):
+    """
+    How much of the tree closes up as the mask is dilated, radius by radius.
+
+    This replaces the hand-placed gap threshold with a measurement. Dilating
+    the mask by r closes any gap up to 2r -- both walls advance -- so the
+    curve of "centerline length in the largest component" against r says at
+    what bridging distance the tree actually becomes one object, and its
+    shape says whether it ever does:
+
+      - a sharp collapse in the component count around one or two voxels,
+        with the length fraction jumping to near 1, means the fragments were
+        real vessel separated by thin gaps. The knee is the bridging radius
+        that can be justified, and the plateau after it is the answer.
+      - a slow, steady climb with no knee means the fragments are genuinely
+        somewhere else, and dilating is merely gluing unrelated things
+        together. No threshold is defensible in that case, and the fragments
+        have to be explained rather than bridged.
+
+    One Euclidean distance transform of the background serves every radius,
+    so the sweep costs one EDT and one labelling per point. Components are
+    attributed by looking up where each existing skeleton component lands
+    after dilation, which is exact: dilation only ever merges.
+    """
+    outside = distance_transform_edt(~mask, sampling=spacing)
+    total = float(sum(length for length, _ in parts))
+    anchors = [(length, np.rint(positions[next(iter(nodes))]).astype(int)) for length, nodes in parts]
+
+    rows = []
+    for radius in dilations:
+        labels, n_labels = connected_components(outside <= radius, structure=np.ones((3, 3, 3), dtype=int))
+        totals = defaultdict(float)
+        members = defaultdict(int)
+        for length, anchor_voxel in anchors:
+            label = int(labels[tuple(anchor_voxel)])
+            totals[label] += length
+            members[label] += 1
+        best = max(totals, key=lambda label: totals[label])
+        rows.append({
+            "dilation_mm": float(radius),
+            "gap_bridged_mm": float(2.0 * radius),
+            "n_mask_components": int(n_labels),
+            "n_centerline_components": len(totals),
+            "n_merged_into_largest": members[best],
+            "length_fraction_largest": totals[best] / total if total else 0.0,
+            "length_gained_mm": totals[best] - parts[0][0],
+        })
+
+    # share of the length that started outside the main component and has
+    # come back, which is the only scale-free way to read the curve
+    missing = total - parts[0][0]
+    for row in rows:
+        row["recovered_fraction"] = row["length_gained_mm"] / missing if missing > 0 else 0.0
+    return rows
+
+
+def print_bridging(rows, voxel_size):
+    """Prints the bridging curve and reads its shape out loud."""
+    if not rows:
+        return
+    print("\n=== bridging curve (mask dilated, centerline re-attributed) ===")
+    print("  dilation  closes gaps  mask comps  centerline comps  merged  in largest  of missing")
+    for row in rows:
+        print(f"  {row['dilation_mm']:6.2f} mm  {row['gap_bridged_mm']:8.2f} mm  "
+              f"{row['n_mask_components']:10d}  {row['n_centerline_components']:16d}  "
+              f"{row['n_merged_into_largest']:6d}  {row['length_fraction_largest']:10.1%}  "
+              f"{row['recovered_fraction']:10.1%}")
+
+    # The knee is read on the share of the *missing* length recovered, not on
+    # the length fraction itself: a tree that already starts at 95% cannot
+    # gain ten points however cleanly its fragments reattach, and judging it
+    # on the raw fraction would call every well-connected tree knee-less.
+    steps = [(rows[i]["recovered_fraction"] - rows[i - 1]["recovered_fraction"], i)
+             for i in range(1, len(rows))]
+    if not steps:
+        return
+    jump, index = max(steps)
+    last = rows[-1]
+    if jump >= 0.25:
+        print(f"  knee at {rows[index]['dilation_mm']:.2f} mm of dilation "
+              f"({rows[index]['gap_bridged_mm']:.2f} mm of gap closed): {jump:.0%} of the missing "
+              f"centerline reattaches in that single step. That is the bridging radius the data "
+              f"supports, and what it absorbs was separated vessel, not false positive")
+    else:
+        print(f"  no knee: the recovery climbs smoothly to {last['recovered_fraction']:.0%} of the "
+              f"missing length at {last['dilation_mm']:.2f} mm ({last['gap_bridged_mm']:.2f} mm of "
+              f"gap). The fragments are not sitting just off the tree -- dilating that far glues "
+              f"unrelated objects together, so they have to be explained rather than bridged")
+    if last["recovered_fraction"] < 0.9:
+        print(f"  {1.0 - last['recovered_fraction']:.0%} of the missing length never reattaches, "
+              f"even at {last['dilation_mm']:.2f} mm")
+
+
+BRIDGE_COLUMNS = ("dilation_mm", "gap_bridged_mm", "n_mask_components", "n_centerline_components",
+                  "n_merged_into_largest", "length_fraction_largest", "length_gained_mm",
+                  "recovered_fraction")
+
+
+def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
+                    compare_distance=None, compare_inside=None):
     """
     Describes every component that is not the main one, and above all how far
     each sits from it.
@@ -1065,6 +1177,24 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap):
     one can be opened directly in a viewer -- which is the only way to settle
     the ambiguous ones.
 
+    A size threshold alone cannot make that call and neither can this
+    distance on its own -- a real artery that dropped out over 1 to 2 cm of
+    poor contrast lands on the far side of any reasonable gap threshold, so
+    "isolated" here means "not within `wall_gap`", nothing more. Two things
+    settle it, and both are done elsewhere: `bridging_curve` replaces the
+    hand-placed threshold with the dilation radius at which the tree actually
+    closes up, and `compare_distance` cross-checks each fragment against a
+    second segmentation.
+
+    That second mask is the decisive one when the model separates arteries
+    from veins: a long, coherent, well-calibred fragment that is not attached
+    to the arterial trunk but does attach to the venous one is not a false
+    positive at all, it is an A/V labelling error, and the fix is in the
+    classification head rather than in the sensitivity. `compare_gap_mm` is
+    the wall-to-wall distance to that mask, `compare_overlap` the share of the
+    fragment's centerline actually inside it once dilated, and `nearer` says
+    which of the two trees the fragment belongs to on distance alone.
+
     Returns one row per orphan, longest first.
     """
     if len(parts) < 2:
@@ -1087,14 +1217,26 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap):
 
         i, j, k = voxel(orphan_node)
         mi, mj, mk = voxel(main_node)
+        wall_distance = max(0.0, axis_gap - float(radii[orphan_node]) - float(radii[main_node]))
+
+        compare_gap, overlap, nearer = None, None, ""
+        if compare_distance is not None:
+            grid = tuple(np.rint(positions[nodes]).astype(int).T)
+            # the EDT of the other mask already measures to its surface, so
+            # only this fragment's own radius has to come off
+            compare_gap = max(0.0, float((compare_distance[grid] - radii[nodes]).min()))
+            overlap = float(compare_inside[grid].mean())
+            nearer = "compare" if compare_gap < wall_distance else "main"
+
         rows.append({
+            "compare_gap_mm": compare_gap, "compare_overlap": overlap, "nearer": nearer,
             "component_id": index,
             "length_mm": float(length),
             "n_points": int(len(nodes)),
             "median_radius_mm": float(np.median(values)),
             "max_radius_mm": float(values.max()),
             "gap_axis_mm": axis_gap,
-            "gap_wall_mm": max(0.0, axis_gap - float(radii[orphan_node]) - float(radii[main_node])),
+            "gap_wall_mm": wall_distance,
             "i": int(i), "j": int(j), "k": int(k),
             "main_i": int(mi), "main_j": int(mj), "main_k": int(mk),
         })
@@ -1120,7 +1262,7 @@ def orphan_split(orphans, min_length=0.0):
     }
 
 
-def print_orphans(orphans, wall_gap, min_length=10.0, show=8):
+def print_orphans(orphans, wall_gap, compare_name=None, min_length=10.0, show=8):
     """Prints the two populations of orphan components and the worst of them."""
     if not orphans:
         return
@@ -1140,16 +1282,40 @@ def print_orphans(orphans, wall_gap, min_length=10.0, show=8):
     print(f"  of the {len(substantial)} over {min_length:.0f} mm: {big['n_bridgeable']} broken off "
           f"({big['length_bridgeable_mm']:.0f} mm), {big['n_isolated']} isolated "
           f"({big['length_isolated_mm']:.0f} mm)")
-    print("  broken off means the model lost continuity and the fix is upstream; isolated means "
-          "false positives and the fix is specificity. Open a few of each before deciding")
+    print(f"  'isolated' only means further than {wall_gap:.1f} mm -- a real artery that dropped "
+          f"out over a centimetre of poor contrast lands there too. Use the bridging curve "
+          f"(--bridge-sweep) and the coordinates below before calling any of it a false positive")
+
+    compared = [row for row in substantial if row["compare_gap_mm"] is not None]
+    if compared:
+        near = [row for row in compared if row["nearer"] == "compare"]
+        inside = [row for row in compared if row["compare_overlap"] >= 0.5]
+        print(f"  against {compare_name}: {len(inside)}/{len(compared)} have more than half their "
+              f"centerline inside it ({sum(r['length_mm'] for r in inside):.0f} mm), and "
+              f"{len(near)} merely sit closer to it than to the main tree "
+              f"({sum(r['length_mm'] for r in near):.0f} mm)")
+        if inside:
+            print("  the overlapping ones are A/V labelling errors, not false positives -- the fix "
+                  "is the classification head rather than the sensitivity")
+        if len(near) > len(inside):
+            print("  read the merely-close ones with care: arteries and veins run alongside each "
+                  "other everywhere in the lung, so proximity alone is nearly free. It is the "
+                  "overlap column that carries the evidence, and a fragment that touches the other "
+                  "mask without lying inside it is a kissing-vessel geometry, not a swap")
 
     if substantial:
-        print("  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis  fragment voxel      nearest on trunk")
+        header = "  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis"
+        header += "   cmp_gap  cmp_ovl  nearer" if compared else ""
+        print(header + "  fragment voxel      nearest on trunk")
         for row in substantial[:show]:
-            print(f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
-                  f"{row['max_radius_mm']:6.2f} {row['gap_wall_mm']:9.2f} {row['gap_axis_mm']:9.2f}  "
-                  f"({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
-                  f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
+            line = (f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
+                    f"{row['max_radius_mm']:6.2f} {row['gap_wall_mm']:9.2f} {row['gap_axis_mm']:9.2f}")
+            if compared:
+                line += (f" {row['compare_gap_mm']:9.2f} {row['compare_overlap']:8.2f}  "
+                         f"{row['nearer']:>6}" if row["compare_gap_mm"] is not None
+                         else " " * 27)
+            print(line + f"  ({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
+                         f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
         if len(substantial) > show:
             print(f"  ... {len(substantial) - show} more over {min_length:.0f} mm, "
                   f"use --orphans-csv for the full list")
@@ -1410,6 +1576,7 @@ BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "l
 
 ORPHAN_COLUMNS = ("component_id", "length_mm", "n_points", "median_radius_mm", "max_radius_mm",
                   "gap_axis_mm", "gap_wall_mm", "bridgeable",
+                  "compare_gap_mm", "compare_overlap", "nearer",
                   "i", "j", "k", "main_i", "main_j", "main_k")
 
 QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volume_fraction",
@@ -1600,6 +1767,7 @@ def main():
     parser.add_argument("--breakpoints-csv", help="CSV of the leaves that end too early, with their coordinates")
     parser.add_argument("--orphans-csv", help="One row per component outside the main tree, with "
                                               "its distance to the tree and its coordinates")
+    parser.add_argument("--bridge-csv", help="The bridging curve, one row per dilation radius")
     parser.add_argument("--quality-csv", help="Single-row CSV of the quality metrics, to concatenate over cases")
     parser.add_argument("--sweep-csv", help="Ratios against the pruning strength, one row per k")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
@@ -1654,6 +1822,23 @@ def main():
     parser.add_argument("--orphan-gap", type=float, default=3.0,
                         help="A component whose wall is within this many mm of the main tree is "
                              "counted as broken off rather than as a false positive. Default: 3")
+    parser.add_argument("--compare-mask", help="A second segmentation (typically the venous "
+                                               "prediction) to cross-check the orphan components "
+                                               "against. Must be on the input grid. Omit it and "
+                                               "pass --compare-label alone to take the other class "
+                                               "out of the input file itself")
+    parser.add_argument("--compare-label", type=int, default=None,
+                        help="Label value to isolate for the comparison. Read from --compare-mask "
+                             "if given, otherwise from --input, which is the usual case for a "
+                             "multi-class segmentation: --label 4 --compare-label 3")
+    parser.add_argument("--compare-dilate", type=float, default=1.0,
+                        help="Voxels of dilation applied to --compare-mask before measuring how "
+                             "much of a fragment lies inside it. Default: 1")
+    parser.add_argument("--bridge-sweep", type=float, nargs="*", default=None, metavar="MM",
+                        help="Dilate the mask by each of these radii (mm) and report how much "
+                             "centerline ends up in the largest component. Replaces the "
+                             "hand-placed --orphan-gap with the radius at which the tree actually "
+                             "closes. Pass no value for one to six voxels")
     parser.add_argument("--keep-cycles", action="store_true",
                         help="Do not cut the loops of the skeleton. They are artefacts and they make "
                              "the Strahler orders downstream of them meaningless, so this is for "
@@ -1666,6 +1851,13 @@ def main():
     parser.add_argument("--root", type=int, nargs=3, metavar=("I", "J", "K"),
                         help="Voxel (input grid) closest to the trunk, used as generation 0")
     args = parser.parse_args()
+
+    # one multi-class file holds both trees more often than two files do, so
+    # --compare-label alone reads the other class out of --input
+    compare_path = args.compare_mask or (args.input if args.compare_label is not None else None)
+    if compare_path == args.input and args.compare_label == args.label:
+        raise SystemExit("--compare-label is the same class as --label; there is nothing to "
+                         "compare the tree against but itself")
 
     mask, affine, spacing = load_mask(args.input, args.label)
     if not mask.any():
@@ -1703,6 +1895,23 @@ def main():
 
     voxel_size = float(work_spacing.min())
     world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
+
+    compare_distance = compare_inside = compare_name = None
+    if compare_path:
+        other, other_affine, other_spacing = load_mask(compare_path, args.compare_label)
+        if other.shape != mask.shape:
+            raise SystemExit(f"--compare-mask has shape {other.shape}, the input has {mask.shape}; "
+                             f"they have to be on the same grid")
+        if not args.no_resample:
+            other = resample_isotropic(other, other_affine, other_spacing, args.spacing)[0]
+        if other.shape != work_mask.shape or not other.any():
+            raise SystemExit("--compare-mask is empty or did not resample onto the working grid")
+        compare_distance = distance_transform_edt(~other, sampling=work_spacing)
+        compare_inside = compare_distance <= args.compare_dilate * voxel_size
+        compare_name = os.path.basename(compare_path)
+        if compare_path == args.input:
+            compare_name = f"label {args.compare_label} of the same file"
+        print(f"compare mask: {compare_name}, {int(other.sum())} voxels")
     result = build_tree(base_graph, positions, radii, world, voxel_size, args, args.radius_factor)
     if result is None:
         raise SystemExit("nothing left after pruning, lower --min-branch-length or --radius-factor")
@@ -1750,12 +1959,21 @@ def main():
         breakpoint_radius = 2.0 * voxel_size
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
-    orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap)
+    orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
+                              compare_distance, compare_inside)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
                               result["cycles"], len(result["broken"]), orphans)
     print_quality(metrics, breakpoints)
-    print_orphans(orphans, args.orphan_gap)
+    print_orphans(orphans, args.orphan_gap, compare_name)
+
+    bridge = None
+    if args.bridge_sweep is not None:
+        dilations = sorted(args.bridge_sweep or list(voxel_size * np.arange(1.0, 7.0)))
+        if dilations[0] > 0:
+            dilations.insert(0, 0.0)
+        bridge = bridging_curve(parts, positions, work_mask, work_spacing, dilations)
+        print_bridging(bridge, voxel_size)
 
     output = args.output or default_output_path(args.input)
     volume = paint_centerline(table, positions, mask.shape, factors, args.paint)
@@ -1787,6 +2005,9 @@ def main():
     if args.orphans_csv:
         write_table_csv(args.orphans_csv, orphans, ORPHAN_COLUMNS)
         print(f"wrote {args.orphans_csv}")
+    if args.bridge_csv and bridge:
+        write_table_csv(args.bridge_csv, bridge, BRIDGE_COLUMNS)
+        print(f"wrote {args.bridge_csv}")
     if args.quality_csv:
         write_table_csv(args.quality_csv, [metrics], QUALITY_COLUMNS)
         print(f"wrote {args.quality_csv}")

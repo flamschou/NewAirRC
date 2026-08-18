@@ -318,6 +318,60 @@ as input-grid voxels so they open directly in a viewer, which is the only way
 to settle the ambiguous ones; `--orphans-csv` exports all of them, and the
 two totals go into `--quality-csv`.
 
+**That threshold alone does not settle anything** and the report says so: an
+artery that dropped out over a centimetre of poor contrast — routine in VIBE
+near the diaphragm — lands on the "isolated" side of any reasonable gap. Two
+measurements do settle it.
+
+#### The bridging curve
+
+`--bridge-sweep [MM ...]` dilates the mask by each radius (one voxel to six
+if no value is given) and reports how much centerline ends up in the largest
+component. Dilating by r closes any gap up to 2r, since both walls advance.
+
+```
+  dilation  closes gaps  mask comps  centerline comps  merged  in largest  of missing
+    0.00 mm      0.00 mm          43                40       1       95.3%        0.0%
+    1.00 mm      2.00 mm          30                28      13       95.9%       12.6%
+    2.00 mm      4.00 mm          17                17      24       98.2%       60.7%
+    3.00 mm      6.00 mm          14                14      27       98.7%       72.2%
+  knee at 2.00 mm of dilation (4.00 mm of gap closed): 48% of the missing
+  centerline reattaches in that single step.
+```
+
+The last column is the share of the *missing* length recovered, not the raw
+fraction — a tree already at 95% cannot gain ten points however cleanly its
+fragments reattach, so the raw fraction would call every well-connected tree
+knee-less. A sharp knee means the fragments were separated vessel and gives
+the bridging radius the data supports; a smooth climb with no knee means they
+are genuinely elsewhere and dilating merely glues unrelated objects together.
+`--bridge-csv` exports it.
+
+#### Cross-check against the venous prediction
+
+Two forms. With a multi-class segmentation, name the two classes and the
+second tree is read out of the same file:
+
+```bash
+python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 \
+  --bridge-sweep --orphans-csv orphans.csv
+```
+
+With two files, `--compare-mask veins.nii.gz` (plus `--compare-label` if that
+file is itself multi-class); it has to be on the input grid. Either way, and
+with `--compare-dilate`, this adds three columns per orphan: `compare_gap_mm` (wall to wall), 
+`compare_overlap` (share of the fragment's centerline inside the other mask
+once dilated) and `nearer`. A long, coherent, well-calibred fragment that is
+not attached to the arterial trunk but *does* lie inside the venous one is
+not a false positive at all — it is an A/V labelling error, and the fix is the
+classification head rather than the sensitivity.
+
+Read the two columns differently. High overlap is evidence. Mere proximity is
+not: arteries and veins run alongside each other everywhere in the lung, so
+`nearer = compare` is nearly free, and a fragment touching the venous mask
+without lying inside it is a kissing-vessel geometry rather than a swap. The
+report makes that distinction explicitly.
+
 5. **Breakpoints.** Terminal branches still close to the main path
    (`--breakpoint-order`) yet several millimetres wide
    (`--breakpoint-radius`): a vessel that size does not simply end. This is
@@ -389,6 +443,13 @@ range, R², the 95% t interval on the slope carried through the same
 exponential, and N per order so it is visible when a fit rests on two
 branches. With five or six usable orders those intervals are wide; that
 width is the result, not a failure.
+
+One more warning to expect: the report flags the lowest fitted order when its
+mean diameter sits on the censoring boundary. Under 1.5 voxels of radius the
+distance transform *cannot* return less — the distribution is truncated from
+below, not merely imprecise — and that order anchors the steep end of every
+fit. Pre-specify a range stopping one order earlier and check the ratios do
+not move.
 
 **These numbers are not comparable to the literature unless the ordering is
 Strahler.** A generation step is one bifurcation; a Strahler step is several,
