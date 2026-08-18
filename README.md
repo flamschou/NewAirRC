@@ -372,6 +372,36 @@ not: arteries and veins run alongside each other everywhere in the lung, so
 without lying inside it is a kissing-vessel geometry rather than a swap. The
 report makes that distinction explicitly.
 
+#### The severed pedicle
+
+Neither test above sees the most common case. A fragment can be correctly
+classified, and the trunk too, while the few millimetres of vessel joining
+them were given to the *other* class: at a crossing the two trees run so
+close that the separation is a coin toss, and losing it cuts the vessel in
+two. The fragment is then an orphan not because it is wrong and not because
+there is a hole, but because its pedicle was taken.
+
+Whenever a comparison mask is available this is tested with no threshold at
+all, by labelling the union of the two classes: if a fragment and the trunk
+are separate in one class and joined in the union, the cut ran through the
+other class. The `union` column says `joins` or `hole` per fragment and the
+totals go into `--quality-csv`.
+
+```
+  through label 3 of the same file: 318 mm in 11 components rejoin the trunk once the
+  two classes are taken together, 145 mm in 28 do not
+  of the ones over 10 mm: 309 mm rejoin, 73 mm do not
+  the dominant defect is therefore a severed pedicle, not a missing vessel [...]
+  the fix is the A/V classification head, not the sensitivity
+```
+
+Run it both ways — `--label 4 --compare-label 3` then `--label 3
+--compare-label 4` — and concatenate the two `--quality-csv` rows. One tree
+severed and the other clean means the classifier hands crossings
+preferentially to one class; both severed means the exchanges go both ways;
+neither severed means the continuity problem is not an A/V confusion at all
+and the fragments have to be explained some other way.
+
 5. **Breakpoints.** Terminal branches still close to the main path
    (`--breakpoint-order`) yet several millimetres wide
    (`--breakpoint-radius`): a vessel that size does not simply end. This is

@@ -1049,6 +1049,27 @@ def find_breakpoints(table, positions, smooth, factors, max_order, min_radius):
     return sorted(breakpoints, key=lambda b: -b["tip_radius_mm"])
 
 
+def union_labels(mask, other):
+    """
+    26-connected labelling of the two classes taken together.
+
+    This settles a failure mode that neither the gap threshold nor the
+    overlap test can see. A fragment can be correctly classified, and the
+    trunk too, while the few millimetres of vessel joining them were given to
+    the other class: at a crossing the two trees run so close that the
+    separation becomes a coin toss, and losing it severs the artery in two.
+    The fragment is then an orphan not because it is wrong, nor because there
+    is a hole, but because its pedicle was taken.
+
+    Labelling the union tells the three cases apart with no threshold at all:
+    if a fragment and the trunk are separate in one class and joined in the
+    union, the cut ran through the other class and the fault is the A/V
+    classification head. If they are separate in the union too, there is a
+    real hole, and that is bridging or a plain false negative.
+    """
+    return connected_components(mask | other, structure=np.ones((3, 3, 3), dtype=int))[0]
+
+
 def bridging_curve(parts, positions, mask, spacing, dilations):
     """
     How much of the tree closes up as the mask is dilated, radius by radius.
@@ -1148,7 +1169,7 @@ BRIDGE_COLUMNS = ("dilation_mm", "gap_bridged_mm", "n_mask_components", "n_cente
 
 
 def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
-                    compare_distance=None, compare_inside=None):
+                    compare_distance=None, compare_inside=None, union=None):
     """
     Describes every component that is not the main one, and above all how far
     each sits from it.
@@ -1202,6 +1223,11 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
 
     main = np.array(sorted(parts[0][1]))
     tree = cKDTree(world[main])
+
+    def anchor_voxel(nodes):
+        return tuple(np.rint(positions[next(iter(nodes))]).astype(int))
+
+    main_union = int(union[anchor_voxel(parts[0][1])]) if union is not None else None
     rows = []
     for index, (length, nodes) in enumerate(parts[1:], start=1):
         nodes = np.array(sorted(nodes))
@@ -1228,8 +1254,13 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
             overlap = float(compare_inside[grid].mean())
             nearer = "compare" if compare_gap < wall_distance else "main"
 
+        reconnects = None
+        if union is not None:
+            reconnects = int(int(union[anchor_voxel(nodes)]) == main_union)
+
         rows.append({
             "compare_gap_mm": compare_gap, "compare_overlap": overlap, "nearer": nearer,
+            "union_reconnects": reconnects,
             "component_id": index,
             "length_mm": float(length),
             "n_points": int(len(nodes)),
@@ -1251,10 +1282,15 @@ def orphan_split(orphans, min_length=0.0):
     kept = [row for row in orphans if row["length_mm"] >= min_length]
     bridgeable = [row for row in kept if row["bridgeable"]]
     isolated = [row for row in kept if not row["bridgeable"]]
+    severed = [row for row in kept if row.get("union_reconnects")]
+    holed = [row for row in kept if row.get("union_reconnects") == 0]
     return {
         "n_bridgeable": len(bridgeable), "n_isolated": len(isolated),
         "length_bridgeable_mm": float(sum(row["length_mm"] for row in bridgeable)),
         "length_isolated_mm": float(sum(row["length_mm"] for row in isolated)),
+        "n_severed": len(severed), "n_holed": len(holed),
+        "length_severed_mm": float(sum(row["length_mm"] for row in severed)),
+        "length_holed_mm": float(sum(row["length_mm"] for row in holed)),
         "median_radius_bridgeable_mm": float(np.median([r["median_radius_mm"] for r in bridgeable]))
         if bridgeable else None,
         "median_radius_isolated_mm": float(np.median([r["median_radius_mm"] for r in isolated]))
@@ -1282,9 +1318,26 @@ def print_orphans(orphans, wall_gap, compare_name=None, min_length=10.0, show=8)
     print(f"  of the {len(substantial)} over {min_length:.0f} mm: {big['n_bridgeable']} broken off "
           f"({big['length_bridgeable_mm']:.0f} mm), {big['n_isolated']} isolated "
           f"({big['length_isolated_mm']:.0f} mm)")
-    print(f"  'isolated' only means further than {wall_gap:.1f} mm -- a real artery that dropped "
+    print(f"  'isolated' only means further than {wall_gap:.1f} mm -- a real vessel that dropped "
           f"out over a centimetre of poor contrast lands there too. Use the bridging curve "
           f"(--bridge-sweep) and the coordinates below before calling any of it a false positive")
+
+    united = [row for row in orphans if row.get("union_reconnects") is not None]
+    if united:
+        big = orphan_split(united, min_length)
+        print(f"  through {compare_name}: {total['length_severed_mm']:.0f} mm in "
+              f"{total['n_severed']} components rejoin the trunk once the two classes are taken "
+              f"together, {total['length_holed_mm']:.0f} mm in {total['n_holed']} do not")
+        print(f"  of the ones over {min_length:.0f} mm: {big['length_severed_mm']:.0f} mm rejoin, "
+              f"{big['length_holed_mm']:.0f} mm do not")
+        if total["length_severed_mm"] > total["length_holed_mm"]:
+            print("  the dominant defect is therefore a severed pedicle, not a missing vessel: "
+                  "these fragments are correctly classified and so is the trunk, but the vessel "
+                  "joining them was given to the other class at a crossing. The fix is the A/V "
+                  "classification head, not the sensitivity")
+        elif total["length_holed_mm"] > 0:
+            print("  most of it does not rejoin even through the other class, so these are real "
+                  "holes: bridging or plain false negatives, not an A/V confusion")
 
     compared = [row for row in substantial if row["compare_gap_mm"] is not None]
     if compared:
@@ -1306,6 +1359,7 @@ def print_orphans(orphans, wall_gap, compare_name=None, min_length=10.0, show=8)
     if substantial:
         header = "  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis"
         header += "   cmp_gap  cmp_ovl  nearer" if compared else ""
+        header += "  union" if united else ""
         print(header + "  fragment voxel      nearest on trunk")
         for row in substantial[:show]:
             line = (f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
@@ -1314,6 +1368,8 @@ def print_orphans(orphans, wall_gap, compare_name=None, min_length=10.0, show=8)
                 line += (f" {row['compare_gap_mm']:9.2f} {row['compare_overlap']:8.2f}  "
                          f"{row['nearer']:>6}" if row["compare_gap_mm"] is not None
                          else " " * 27)
+            if united:
+                line += f"  {'joins' if row['union_reconnects'] else ' hole':>5}"
             print(line + f"  ({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
                          f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
         if len(substantial) > show:
@@ -1350,6 +1406,10 @@ def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fract
         "n_orphans_isolated": orphan_split(orphans)["n_isolated"],
         "orphan_length_bridgeable_mm": orphan_split(orphans)["length_bridgeable_mm"],
         "orphan_length_isolated_mm": orphan_split(orphans)["length_isolated_mm"],
+        "n_orphans_severed": orphan_split(orphans)["n_severed"],
+        "n_orphans_holed": orphan_split(orphans)["n_holed"],
+        "orphan_length_severed_mm": orphan_split(orphans)["length_severed_mm"],
+        "orphan_length_holed_mm": orphan_split(orphans)["length_holed_mm"],
         "n_leaves": len(leaves),
         "resolution_floor_mm": floor,
         "leaves_at_floor_fraction": len(at_floor) / len(leaves) if leaves else 0.0,
@@ -1576,13 +1636,15 @@ BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "l
 
 ORPHAN_COLUMNS = ("component_id", "length_mm", "n_points", "median_radius_mm", "max_radius_mm",
                   "gap_axis_mm", "gap_wall_mm", "bridgeable",
-                  "compare_gap_mm", "compare_overlap", "nearer",
+                  "compare_gap_mm", "compare_overlap", "nearer", "union_reconnects",
                   "i", "j", "k", "main_i", "main_j", "main_k")
 
 QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volume_fraction",
                    "length_outside_largest_mm", "n_components", "n_fragments_over_10mm",
                    "n_orphans_bridgeable", "n_orphans_isolated",
                    "orphan_length_bridgeable_mm", "orphan_length_isolated_mm",
+                   "n_orphans_severed", "n_orphans_holed",
+                   "orphan_length_severed_mm", "orphan_length_holed_mm",
                    "leaves_at_floor_fraction", "n_leaves", "resolution_floor_mm",
                    "murray_median", "murray_q1", "murray_q3", "n_murray",
                    "n_cycles", "n_cycles_broken", "n_breakpoints", "breakpoints_fraction")
@@ -1896,7 +1958,7 @@ def main():
     voxel_size = float(work_spacing.min())
     world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
 
-    compare_distance = compare_inside = compare_name = None
+    compare_distance = compare_inside = compare_union = compare_name = None
     if compare_path:
         other, other_affine, other_spacing = load_mask(compare_path, args.compare_label)
         if other.shape != mask.shape:
@@ -1908,6 +1970,7 @@ def main():
             raise SystemExit("--compare-mask is empty or did not resample onto the working grid")
         compare_distance = distance_transform_edt(~other, sampling=work_spacing)
         compare_inside = compare_distance <= args.compare_dilate * voxel_size
+        compare_union = union_labels(work_mask, other)
         compare_name = os.path.basename(compare_path)
         if compare_path == args.input:
             compare_name = f"label {args.compare_label} of the same file"
@@ -1960,7 +2023,7 @@ def main():
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
     orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
-                              compare_distance, compare_inside)
+                              compare_distance, compare_inside, compare_union)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
                               result["cycles"], len(result["broken"]), orphans)
