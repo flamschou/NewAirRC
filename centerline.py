@@ -11,26 +11,37 @@ Pipeline:
     3. resample to an isotropic grid so the skeleton is not biased by the
        slice thickness
     4. thin the volume with Lee's 3D skeletonization
-    5. turn the skeleton voxels into a graph, merge junction clusters and
-       prune the short spurious side branches created by thinning
+    5. turn the skeleton voxels into a graph, merge junction clusters,
+       prune the short spurious side branches created by thinning, and cut
+       the loops, which are always welds between touching vessels
     6. smooth the branches, within the digitization error, before measuring
        anything: a raw voxel path is ~10% longer than the vessel it follows
     7. estimate a local radius from the distance transform and number the
-       branches, either along the main path (the widest daughter continues
-       its parent) or by Strahler order -- see `compute_orders`
+       branches -- along the main path, by Strahler order, or by
+       diameter-defined Strahler, see `compute_orders`
+    8. group the segments into elements and fit R_b, R_d and R_l as the
+       slopes of the semi-log plots of the count, diameter and length
+       against the order, with their confidence intervals
 
 Outputs:
     --output        nifti centerline mask, on the input grid. Defaults to
                     <input>_centerline.nii.gz next to the input mask
     --csv           one row per centerline point (voxel + world mm + radius)
-    --branches-csv  one row per branch (length, radii, generation, Strahler)
-    --orders-csv    one row per generation / Strahler order
+    --branches-csv  one row per segment (length, radii, all four orderings)
+    --elements-csv  one row per element (same-order run of segments)
+    --orders-csv    one row per order
+    --ratios-csv    R_b / R_d / R_l with their confidence intervals
     --bifurcations-csv  one row per junction (angle, area ratio, Murray)
+    --sweep-csv     the ratios against the pruning strength, one row per k
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
 Usage:
     python centerline.py --input artery.nii.gz
     python centerline.py --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
+    python centerline.py --input artery.nii.gz --ordering strahler_dd --fit-orders 1 6
+
+See phantom.py for the calibration tree that says how much of what this
+prints is anatomy and how much is the voxel size.
 """
 import argparse
 import itertools
@@ -43,6 +54,7 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes, distance_transform_edt, zoom
 from scipy.ndimage import label as connected_components
 from scipy.optimize import brentq
+from scipy.stats import t as student_t
 from skimage.draw import line_nd
 from skimage.morphology import skeletonize
 
@@ -81,7 +93,17 @@ def component_volume_fraction(mask):
 
 def resample_isotropic(mask, affine, spacing, target=None):
     """
-    Resamples the mask to isotropic voxels (nearest neighbour).
+    Resamples the mask to isotropic voxels.
+
+    The mask is interpolated linearly as a float occupancy and re-thresholded
+    at 0.5, not sampled with the nearest neighbour: nearest neighbour just
+    replicates the coarse voxels, so the surface keeps the steps of the
+    input grid and the thinning follows them. The 0.5 isosurface of the
+    linear interpolant sits, to first order, where the original boundary was.
+
+    Downsampling (a `--spacing` coarser than the input) is not anti-aliased
+    and will drop the thinnest vessels; the default target is the finest
+    input spacing, which only ever upsamples.
 
     Returns the new mask, its affine and the voxel->voxel mapping used later
     to project the centerline back onto the input grid. scipy's `grid_mode`
@@ -92,7 +114,7 @@ def resample_isotropic(mask, affine, spacing, target=None):
     if np.allclose(factors, 1.0, atol=1e-3):
         return mask, affine, np.ones(3), spacing.copy()
 
-    resampled = zoom(mask.astype(np.uint8), factors, order=0, grid_mode=True, mode="nearest") > 0
+    resampled = zoom(mask.astype(np.float32), factors, order=1, grid_mode=True, mode="nearest") > 0.5
 
     # voxel_in = M @ voxel_out + t, folded into the affine
     m = np.diag(1.0 / factors)
@@ -264,6 +286,42 @@ def component_lengths(graph):
     return sorted(parts, key=lambda part: -part[0])
 
 
+def break_cycles(graph, radii, max_breaks=500):
+    """
+    Cuts every cycle of the skeleton, at its weakest edge.
+
+    An arterial tree has no anastomosis, so a loop is always an artefact:
+    two vessels running side by side that partial volume welded together, or
+    an artery and a vein left fused by the segmentation. Left in place, a
+    loop is not merely cosmetic -- it makes the tree unorderable. Strahler
+    counts up from the leaves through a supposed DAG, and a branch caught in
+    a loop has no well-defined depth, so the orders downstream of it are
+    quietly wrong rather than visibly missing.
+
+    Each cycle of the cycle basis loses the edge whose thinner endpoint has
+    the smallest radius, which is where two vessels are most likely to be
+    merely touching. Shortest cycles go first: they are the tightest welds
+    and cutting them often opens the longer ones too. The number of cuts is
+    reported, and the cycle count before cutting stays in the quality
+    metrics -- this fixes the ordering, it does not fix the mask.
+
+    Returns the list of (u, v, radius) removed.
+    """
+    broken = []
+    while len(broken) < max_breaks:
+        cycles = nx.cycle_basis(graph)
+        if not cycles:
+            break
+        cycle = min(cycles, key=len)
+        edges = [(u, v) for u, v in zip(cycle, cycle[1:] + cycle[:1]) if graph.has_edge(u, v)]
+        if not edges:
+            break
+        u, v = min(edges, key=lambda e: min(radii[e[0]], radii[e[1]]))
+        graph.remove_edge(u, v)
+        broken.append((int(u), int(v), float(min(radii[u], radii[v]))))
+    return broken
+
+
 def drop_small_components(graph, min_length):
     """Removes connected components whose total length is below `min_length` mm."""
     removed = 0
@@ -411,6 +469,38 @@ def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start
     return direction, float(np.median(radii[order[window]]))
 
 
+def trunk_calibre(nodes, world, radii, head_radius, tail_radius, voxel_size):
+    """
+    Median radius of a branch with the junction blobs cut off, in mm.
+
+    This is the branch calibre every order-wise statistic should use. The
+    plain mean over the branch (`mean_radius_mm`) averages in the ends, where
+    the maximal inscribed sphere is not the vessel at all but the cavity of
+    the bifurcation, which fills with the neighbouring vessels: it inflates
+    the calibre of short branches far more than long ones, i.e. it inflates
+    the high orders more than the low ones, which is exactly the direction
+    that biases the slope of log(D) against the order.
+
+    Each end is trimmed by its own local junction radius -- one parental
+    radius, the rule of thumb -- clamped to 20% of the branch so something
+    always survives on a short branch. A free end is not a junction: pass
+    `head_radius` or `tail_radius` = 0 there and only the last voxel, whose
+    distance transform is unreliable, is dropped.
+    """
+    order = np.asarray(nodes)
+    points = world[order]
+    distance = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
+    total = float(distance[-1])
+
+    head_cut = min(max(float(head_radius), voxel_size), 0.2 * total)
+    tail_cut = min(max(float(tail_radius), voxel_size), 0.2 * total)
+    window = (distance >= head_cut) & (distance <= total - tail_cut)
+    if not window.any():
+        window = np.zeros(len(order), dtype=bool)
+        window[len(order) // 2] = True
+    return float(np.median(radii[order[window]]))
+
+
 def murray_exponent(parent_radius, child_radii):
     """
     Solves sum(r_child^n) = r_parent^n, the exponent of Murray's law.
@@ -445,6 +535,10 @@ def branch_table(graph, ordered, smooth, radii, voxel_size):
         head_axis, head_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[0]], voxel_size)
         tail_axis, tail_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[-1]], voxel_size,
                                                   from_start=False)
+        # a free end carries no junction blob, so nothing has to be cut there
+        head_junction = radii[nodes[0]] if graph.degree(nodes[0]) > 1 else 0.0
+        tail_junction = radii[nodes[-1]] if graph.degree(nodes[-1]) > 1 else 0.0
+        calibre = trunk_calibre(nodes, smooth, radii, head_junction, tail_junction, voxel_size)
 
         table.append({
             "branch_id": branch_id,
@@ -453,6 +547,7 @@ def branch_table(graph, ordered, smooth, radii, voxel_size):
             "length_mm": length,
             "chord_mm": chord,
             "tortuosity": length / chord if chord > 0 else 1.0,
+            "calibre_mm": calibre,
             "mean_radius_mm": float(values.mean()),
             "min_radius_mm": float(values.min()),
             "max_radius_mm": float(values.max()),
@@ -481,6 +576,10 @@ def compute_orders(table):
     - `strahler` orders from the periphery instead: a tip is 1, and a
       junction of two branches of equal order n yields n+1, otherwise the
       largest order carries through.
+    - `strahler_dd` is the diameter-defined refinement of the previous one,
+      computed separately by `diameter_defined_strahler`, and is the ordering
+      to fit the ratios on: it does not inherit the depth of leaves that are
+      truncation artefacts.
 
     With `generation` or `strahler`, the mean calibre must vary
     monotonically -- a violation means the tree leaks into a neighbouring
@@ -513,6 +612,149 @@ def compute_orders(table):
         else:
             entry["strahler"] = orders[0]
     return table
+
+
+def diameter_defined_strahler(table, max_iterations=15):
+    """
+    Re-orders the tree with the diameter-defined Strahler scheme of Jiang,
+    Kassab and Fung (1994), writing the result into `strahler_dd`.
+
+    Classic Strahler sets the order from the topological depth below a
+    branch, so it is only as good as the leaves -- and in an in-vivo mask the
+    leaves are not the real terminals, they are wherever the segmentation ran
+    out of contrast. Two vessels of identical calibre end up several orders
+    apart because one happened to be truncated earlier. The diameter-defined
+    variant breaks that dependence: a parent is promoted above its largest
+    daughter only if its diameter clears the threshold that separates the two
+    orders, so the order tracks calibre and truncation costs one order at
+    most, locally.
+
+    The iteration: start from classic Strahler, take the mean and SD of the
+    diameter within each order, put the boundary between orders n and n+1 at
+    (Dn + SDn + Dn+1 - SDn+1) / 2, re-order the whole tree against those
+    boundaries, and repeat until nothing moves.
+
+    Two deliberate departures, both worth checking against the paper before
+    any of this is quoted:
+      - it runs on segments, not on elements. Kassab orders elements, but the
+        elements are themselves defined by the ordering, so doing it properly
+        means nesting the two fixed points. The segment diameters within one
+        element are close, so the boundaries move little, but this is not the
+        published algorithm.
+      - at the top order there is no n+1 and therefore no boundary; the
+        classic rule (promote when the two largest daughters tie) is used
+        there.
+
+    Returns True if the iteration converged.
+    """
+    by_depth = sorted(table, key=lambda e: e["bfs_generation"])
+    orders = {entry["branch_id"]: entry["strahler"] for entry in table}
+    seen, converged = [], False
+
+    for _ in range(max_iterations):
+        groups = defaultdict(list)
+        for entry in table:
+            groups[orders[entry["branch_id"]]].append(2.0 * entry["calibre_mm"])
+        stats = {order: (float(np.mean(values)),
+                         float(np.std(values, ddof=1)) if len(values) > 1 else 0.0)
+                 for order, values in groups.items()}
+        boundary = {}
+        for order in stats:
+            if order + 1 in stats:
+                (mean_low, sd_low), (mean_high, sd_high) = stats[order], stats[order + 1]
+                boundary[order] = 0.5 * (mean_low + sd_low + mean_high - sd_high)
+
+        updated = {}
+        for entry in reversed(by_depth):
+            children = entry["children"]
+            if not children:
+                updated[entry["branch_id"]] = 1
+                continue
+            child_orders = sorted((updated.get(c, 1) for c in children), reverse=True)
+            top = child_orders[0]
+            if top in boundary:
+                promote = 2.0 * entry["calibre_mm"] > boundary[top]
+            else:
+                promote = len(child_orders) > 1 and child_orders[1] == top
+            updated[entry["branch_id"]] = top + (1 if promote else 0)
+
+        if updated == orders:
+            converged = True
+            break
+        signature = tuple(updated[entry["branch_id"]] for entry in table)
+        orders = updated
+        if signature in seen:  # two-cycle: the boundaries flip a branch back and forth
+            break
+        seen.append(signature)
+
+    for entry in table:
+        entry["strahler_dd"] = orders[entry["branch_id"]]
+    return converged
+
+
+def build_elements(table, order_key, smooth):
+    """
+    Groups consecutive segments of the same order into elements.
+
+    A segment is the piece of vessel between two bifurcations. An element is
+    the whole run of segments that keep the same order, which happens every
+    time a small lateral branch leaves a trunk without raising the trunk's
+    order: the trunk is cut into two segments there, but anatomically it is
+    one vessel.
+
+    The distinction is not cosmetic. Counting elements instead of segments
+    changes both N_n and the mean length L_n, so it changes R_b and R_l -- in
+    the case of L_n by whatever the mean number of segments per element is,
+    which is not small. Horsfield-ordered lengths in the literature are
+    normally elemental; comparing segmental lengths against them understates
+    L_n at every order. Hence both are computed here and neither is implied.
+
+    Returns element dicts carrying the same keys `order_summary` reads.
+    """
+    order_of = {entry["branch_id"]: entry[order_key] for entry in table}
+    successor = {}
+    for entry in table:
+        same = [c for c in entry["children"] if order_of[c] == entry[order_key]]
+        if not same:
+            continue
+        # a Strahler junction gives at most one child the parent's order; the
+        # diameter-defined variant can give it to both, and then the element
+        # follows the wider daughter
+        successor[entry["branch_id"]] = max(same, key=lambda c: table[c]["proximal_calibre_mm"])
+
+    tails = set(successor.values())
+    elements = []
+    for entry in table:
+        if entry["branch_id"] in tails:
+            continue
+        members, current = [], entry["branch_id"]
+        while current is not None:
+            members.append(table[current])
+            current = successor.get(current)
+            if current is not None and len(members) > len(table):
+                break  # a cycle in the successor map would loop forever
+        nodes = [n for member in members for n in member["nodes"]]
+        length = float(sum(member["length_mm"] for member in members))
+        chord = float(np.linalg.norm(smooth[nodes[-1]] - smooth[nodes[0]]))
+        weights = np.array([member["length_mm"] for member in members])
+        weights = weights / weights.sum() if weights.sum() > 0 else np.full(len(members), 1.0 / len(members))
+        elements.append({
+            "element_id": len(elements),
+            "n_segments": len(members),
+            "branch_ids": [member["branch_id"] for member in members],
+            "order": entry[order_key],
+            "length_mm": length,
+            "chord_mm": chord,
+            "tortuosity": length / chord if chord > 0 else 1.0,
+            "calibre_mm": float(np.dot(weights, [m["calibre_mm"] for m in members])),
+            "mean_radius_mm": float(np.dot(weights, [m["mean_radius_mm"] for m in members])),
+            "proximal_calibre_mm": members[0]["proximal_calibre_mm"],
+            "distal_calibre_mm": members[-1]["distal_calibre_mm"],
+            "tip_radius_mm": members[-1]["tip_radius_mm"],
+            "is_terminal": members[-1]["is_terminal"],
+            "nodes": nodes,
+        })
+    return elements
 
 
 def analyze_bifurcations(table, order_key, min_radius):
@@ -562,12 +804,16 @@ def order_summary(table, order_key):
         branches = [b for b in table if b[order_key] == order]
         terminal = [b for b in branches if b["is_terminal"]]
         lengths = np.array([b["length_mm"] for b in branches])
+        calibres = np.array([b["calibre_mm"] for b in branches])
         rows.append({
             "order": order,
             "n_branches": len(branches),
             "n_terminal": len(terminal),
             "total_length_mm": float(lengths.sum()),
             "mean_length_mm": float(lengths.mean()),
+            "sd_length_mm": float(lengths.std(ddof=1)) if len(lengths) > 1 else 0.0,
+            "mean_diameter_mm": float(2.0 * calibres.mean()),
+            "sd_diameter_mm": float(2.0 * calibres.std(ddof=1)) if len(calibres) > 1 else 0.0,
             "mean_radius_mm": float(np.mean([b["mean_radius_mm"] for b in branches])),
             "mean_proximal_calibre_mm": float(np.mean([b["proximal_calibre_mm"] for b in branches])),
             "mean_distal_calibre_mm": float(np.mean([b["distal_calibre_mm"] for b in branches])),
@@ -575,6 +821,141 @@ def order_summary(table, order_key):
             "mean_tip_radius_mm": float(np.mean([b["tip_radius_mm"] for b in terminal])) if terminal else None,
         })
     return rows
+
+
+# The sign of one step of each ordering: +1 when the order grows towards the
+# trunk (Strahler), -1 when it grows towards the periphery (generation). The
+# branching ratios are all defined per step towards the trunk, so the fitted
+# slopes have to be flipped for the peripheral orderings.
+ORDER_DIRECTION = {"strahler": 1, "strahler_dd": 1, "generation": -1, "bfs_generation": -1}
+
+
+def semilog_fit(orders, values):
+    """
+    Least squares of log10(values) on the order.
+
+    Returns the slope, its 95% confidence interval and R2. The interval is
+    the textbook t interval on the slope of a straight line, which with the
+    five or six usable orders of an in-vivo tree is wide -- that width is the
+    result, not a failure: it is what says whether a ratio of 1.55 and one of
+    1.75 can be told apart at this resolution.
+    """
+    x = np.asarray(orders, float)
+    y = np.log10(np.asarray(values, float))
+    n = len(x)
+    scatter = float(((x - x.mean()) ** 2).sum())
+    if n < 3 or scatter <= 0 or not np.isfinite(y).all():
+        return None
+
+    slope, intercept = np.polyfit(x, y, 1)
+    residual = y - (slope * x + intercept)
+    ss_res = float((residual ** 2).sum())
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    half = float(student_t.ppf(0.975, n - 2)) * np.sqrt(ss_res / (n - 2) / scatter)
+    return {
+        "slope": float(slope), "intercept": float(intercept),
+        "r2": 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan"),
+        "slope_low": float(slope - half), "slope_high": float(slope + half),
+        "n_orders": n,
+    }
+
+
+RATIO_KEYS = (("R_b", "n_branches", -1), ("R_d", "mean_diameter_mm", 1), ("R_l", "mean_length_mm", 1))
+
+
+def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
+    """
+    Horsfield's three ratios, read as the slopes of the semi-log plots of the
+    branch count, the mean diameter and the mean length against the order.
+
+    R_b = 10^-slope(log N), R_d = 10^slope(log D), R_l = 10^slope(log L), all
+    per step towards the trunk. Each is returned with the 95% interval of its
+    slope carried through the same exponential, its R2, and the orders the fit
+    actually rests on.
+
+    The three are fitted over one single range of orders, not three: they
+    describe the same tree and quoting them over different ranges would make
+    them incomparable. Orders whose mean diameter falls under `min_diameter`
+    -- three voxels, where the distance transform stops resolving anything --
+    are dropped, and an explicit `order_range` overrides that filter. Fix the
+    range before looking at the numbers: chosen afterwards it is a knob, and
+    it is the one that most easily turns any tree into a published value.
+    """
+    direction = ORDER_DIRECTION[ordering]
+    rows = [row for row in summary if row["order"] >= 0 and row["n_branches"] > 0
+            and row["mean_diameter_mm"] > 0 and row["mean_length_mm"] > 0]
+    if order_range is not None:
+        low, high = order_range
+        rows = [row for row in rows if low <= row["order"] <= high]
+        selection = f"orders {low}..{high} (pre-specified)"
+    else:
+        rows = [row for row in rows if row["mean_diameter_mm"] >= min_diameter]
+        selection = f"orders where the mean diameter clears {min_diameter:.2f} mm (not pre-specified)"
+
+    orders = [row["order"] for row in rows]
+    fits = {}
+    for name, key, sign in RATIO_KEYS:
+        fit = semilog_fit(orders, [row[key] for row in rows])
+        if fit is None:
+            fits[name] = None
+            continue
+        bounds = sorted(10.0 ** (sign * direction * bound)
+                        for bound in (fit["slope_low"], fit["slope_high"]))
+        fits[name] = dict(fit, ratio=10.0 ** (sign * direction * fit["slope"]),
+                          ratio_low=bounds[0], ratio_high=bounds[1])
+    return {"selection": selection, "rows": rows, "orders": orders, "fits": fits}
+
+
+def print_ratios(result, ordering, counting):
+    """Prints the ratio table, with what the fit rests on underneath it."""
+    rows = result["rows"]
+    print(f"\n=== branching ratios ({ordering}, {counting}s) ===")
+    if len(rows) < 3:
+        print(f"  {result['selection']}: {len(rows)} usable order(s), at least 3 are needed")
+        return
+    print(f"  fit over {result['selection']}, {len(rows)} points")
+    print("  ratio                              value   95% CI            R2")
+    labels = {"R_b": "R_b  branching  (10^-slope N)", "R_d": "R_d  diameter   (10^slope D)",
+              "R_l": "R_l  length     (10^slope L)"}
+    for name, _, _ in RATIO_KEYS:
+        fit = result["fits"][name]
+        if fit is None:
+            print(f"  {labels[name]:<33} -")
+            continue
+        print(f"  {labels[name]:<33} {fit['ratio']:6.3f}   [{fit['ratio_low']:5.3f}, "
+              f"{fit['ratio_high']:5.3f}]   {fit['r2']:.3f}")
+    print("  order      : " + " ".join(f"{row['order']:7d}" for row in rows))
+    print("  N          : " + " ".join(f"{row['n_branches']:7d}" for row in rows))
+    print("  D mean (mm): " + " ".join(f"{row['mean_diameter_mm']:7.2f}" for row in rows))
+    print("  L mean (mm): " + " ".join(f"{row['mean_length_mm']:7.2f}" for row in rows))
+    thin = [row["order"] for row in rows if row["n_branches"] < 3]
+    if thin:
+        print(f"  note: order(s) {', '.join(str(o) for o in thin)} rest on fewer than 3 branches")
+    if ORDER_DIRECTION[ordering] < 0:
+        print(f"  note: {ordering} counts away from the trunk. The ratios are still per step "
+              f"towards it, but the published values are Strahler-ordered -- use "
+              f"--ordering strahler_dd to compare with them")
+
+
+def ratio_rows(result, ordering, counting):
+    """The ratio table as flat dicts, one per ratio, for --ratios-csv."""
+    orders = result["orders"]
+    out = []
+    for name, _, _ in RATIO_KEYS:
+        fit = result["fits"][name]
+        out.append({
+            "ratio": name, "ordering": ordering, "counting": counting,
+            "value": fit["ratio"] if fit else None,
+            "ci_low": fit["ratio_low"] if fit else None,
+            "ci_high": fit["ratio_high"] if fit else None,
+            "r2": fit["r2"] if fit else None,
+            "slope": fit["slope"] if fit else None,
+            "n_orders": fit["n_orders"] if fit else len(orders),
+            "order_min": min(orders) if orders else None,
+            "order_max": max(orders) if orders else None,
+            "prespecified": int("pre-specified" in result["selection"]),
+        })
+    return out
 
 
 def resolution_floor(voxel_size):
@@ -622,7 +1003,8 @@ def find_breakpoints(table, positions, smooth, factors, max_order, min_radius):
 
 
 def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
-                    n_volume_components, voxel_size, min_radius, max_order):
+                    n_volume_components, voxel_size, min_radius, max_order,
+                    n_cycles=0, n_cycles_broken=0):
     """
     The five numbers that say whether a segmentation can be trusted.
 
@@ -637,7 +1019,6 @@ def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fract
     at_floor = [b for b in leaves if b["tip_radius_mm"] <= floor * 1.001]
     murray = np.array([b["murray_exponent"] for b in bifurcations
                        if b["well_resolved"] and b["murray_exponent"] is not None])
-    cycles = graph.number_of_edges() - graph.number_of_nodes() + nx.number_connected_components(graph)
 
     return {
         "n_components": len(parts),
@@ -653,7 +1034,8 @@ def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fract
         "murray_median": float(np.median(murray)) if murray.size else None,
         "murray_q1": float(np.percentile(murray, 25)) if murray.size else None,
         "murray_q3": float(np.percentile(murray, 75)) if murray.size else None,
-        "n_cycles": int(cycles),
+        "n_cycles": int(n_cycles),
+        "n_cycles_broken": int(n_cycles_broken),
         "n_breakpoints": len(breakpoints),
         "breakpoints_fraction": len(breakpoints) / len(leaves) if leaves else 0.0,
         "breakpoint_min_radius_mm": min_radius,
@@ -686,7 +1068,8 @@ def print_quality(metrics, breakpoints):
     else:
         line("3. Murray exponent, vessels over 3 voxels", "-", "(no bifurcation resolved well enough)")
     line("4. cycles in the skeleton", f"{metrics['n_cycles']}",
-         "(an artery tree has no anastomosis, expected 0)")
+         f"(an artery tree has no anastomosis, expected 0; {metrics['n_cycles_broken']} cut "
+         f"to make the tree orderable)")
     line(f"5. leaves ending early (order <= {metrics['breakpoint_max_order']}, "
          f"r > {metrics['breakpoint_min_radius_mm']:.2f} mm)",
          f"{metrics['n_breakpoints']}", f"({metrics['breakpoints_fraction']:.1%} of leaves)")
@@ -718,29 +1101,30 @@ def check_monotonicity(rows, order_key):
     mis-rooted tree, so this doubles as a quality check.
     """
     rows = [row for row in rows if row["order"] >= 0]
-    if order_key == "strahler":
+    if order_key in ("strahler", "strahler_dd"):
         rows = rows[::-1]
-    return [(before["order"], after["order"], before["mean_radius_mm"], after["mean_radius_mm"])
-            for before, after in zip(rows, rows[1:]) if after["mean_radius_mm"] > before["mean_radius_mm"]]
+    return [(before["order"], after["order"], before["mean_diameter_mm"], after["mean_diameter_mm"])
+            for before, after in zip(rows, rows[1:]) if after["mean_diameter_mm"] > before["mean_diameter_mm"]]
 
 
-def print_analysis(graph, table, summary, bifurcations, order_key, min_radius):
+def print_analysis(graph, table, summary, bifurcations, order_key, min_radius, counting="segment"):
     """Prints the anatomical report: per order, leaves, bifurcations, tree."""
     label = {"generation": "generation (main path)", "strahler": "Strahler order",
+             "strahler_dd": "diameter-defined Strahler order",
              "bfs_generation": "generation (junctions from the root)"}[order_key]
-    print(f"\n=== branches per {label} ===")
-    print("ord    n  term   length_mm  mean_len  mean_rad  prox_cal  dist_cal  tort  tip_rad")
+    print(f"\n=== {counting}s per {label} ===")
+    print("ord    n  term   length_mm  mean_len    sd_len  mean_dia    sd_dia  mean_rad  tort  tip_rad")
     for row in summary:
         tip = f"{row['mean_tip_radius_mm']:7.2f}" if row["mean_tip_radius_mm"] is not None else "      -"
         print(f"{row['order']:3d} {row['n_branches']:4d} {row['n_terminal']:5d} "
-              f"{row['total_length_mm']:11.1f} {row['mean_length_mm']:9.1f} "
-              f"{row['mean_radius_mm']:9.2f} {row['mean_proximal_calibre_mm']:9.2f} "
-              f"{row['mean_distal_calibre_mm']:9.2f} {row['mean_tortuosity']:5.2f} {tip}")
+              f"{row['total_length_mm']:11.1f} {row['mean_length_mm']:9.1f} {row['sd_length_mm']:9.1f} "
+              f"{row['mean_diameter_mm']:9.2f} {row['sd_diameter_mm']:9.2f} "
+              f"{row['mean_radius_mm']:9.2f} {row['mean_tortuosity']:5.2f} {tip}")
 
     inversions = check_monotonicity(summary, order_key)
     if inversions:
         print(f"calibre monotonicity: VIOLATED at {len(inversions)} step(s) -- " +
-              ", ".join(f"{a}->{b} ({ra:.2f} -> {rb:.2f} mm)" for a, b, ra, rb in inversions))
+              ", ".join(f"{a}->{b} (diameter {ra:.2f} -> {rb:.2f} mm)" for a, b, ra, rb in inversions))
         print("  a vessel cannot widen downstream: check for a leak into a vein, "
               "two vessels fused, or a wrong root")
     else:
@@ -778,19 +1162,6 @@ def print_analysis(graph, table, summary, bifurcations, order_key, min_radius):
     lengths = np.array([b["length_mm"] for b in table])
     print(f"tortuosity        : {describe([b['tortuosity'] for b in table])}")
     print(f"branch length (mm): {describe(lengths)}")
-    reachable = [row for row in summary if row["order"] >= 0]
-    if order_key != "strahler" and len(reachable) > 1:
-        # geometric growth up to the widest order: past that peak the tree
-        # stops splitting and the ratio only measures how it dies out
-        peak = max(range(len(reachable)), key=lambda k: reachable[k]["n_branches"])
-        if peak > 0:
-            growth = (reachable[peak]["n_branches"] / reachable[0]["n_branches"]) ** (1.0 / peak)
-            print(f"growth ratio      : {growth:.2f} branches per {order_key} "
-                  f"up to {reachable[peak]['order']} (widest)")
-    cycles = graph.number_of_edges() - graph.number_of_nodes() + nx.number_connected_components(graph)
-    if cycles:
-        print(f"loops             : {cycles} cycle(s) in the skeleton -- vessels touching each "
-              f"other in the mask, which also shifts the generations downstream")
     orphans = next((row for row in summary if row["order"] < 0), None)
     if orphans:
         print(f"unreachable from the root: {orphans['n_branches']} branches "
@@ -855,17 +1226,25 @@ def write_table_csv(path, table, columns):
         handle.write("\n".join(rows) + "\n")
 
 
-BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "bfs_generation", "n_points",
-                  "length_mm", "chord_mm", "tortuosity",
+BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "strahler_dd", "bfs_generation", "n_points",
+                  "length_mm", "chord_mm", "tortuosity", "calibre_mm",
                   "mean_radius_mm", "min_radius_mm", "max_radius_mm",
                   "proximal_calibre_mm", "distal_calibre_mm", "tip_radius_mm", "is_terminal")
 
-ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm", "mean_length_mm",
+ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm",
+                 "mean_length_mm", "sd_length_mm", "mean_diameter_mm", "sd_diameter_mm",
                  "mean_radius_mm", "mean_proximal_calibre_mm", "mean_distal_calibre_mm",
                  "mean_tortuosity", "mean_tip_radius_mm")
 
 BIFURCATION_COLUMNS = ("node", "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
                        "area_ratio", "asymmetry", "murray_exponent", "angle_deg", "well_resolved")
+
+ELEMENT_COLUMNS = ("element_id", "order", "n_segments", "length_mm", "chord_mm", "tortuosity",
+                   "calibre_mm", "mean_radius_mm", "proximal_calibre_mm", "distal_calibre_mm",
+                   "tip_radius_mm", "is_terminal")
+
+RATIO_COLUMNS = ("ratio", "ordering", "counting", "value", "ci_low", "ci_high", "r2", "slope",
+                 "n_orders", "order_min", "order_max", "prespecified")
 
 BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "length_mm",
                       "i", "j", "k", "x_mm", "y_mm", "z_mm")
@@ -874,7 +1253,7 @@ QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volum
                    "length_outside_largest_mm", "n_components", "n_fragments_over_10mm",
                    "leaves_at_floor_fraction", "n_leaves", "resolution_floor_mm",
                    "murray_median", "murray_q1", "murray_q3", "n_murray",
-                   "n_cycles", "n_breakpoints", "breakpoints_fraction")
+                   "n_cycles", "n_cycles_broken", "n_breakpoints", "breakpoints_fraction")
 
 
 def write_vtk(path, table, smooth, radii):
@@ -909,6 +1288,138 @@ def default_output_path(mask_path, suffix=CENTERLINE_SUFFIX):
 
 
 # --------------------------------------------------------------------------- #
+# pipeline
+# --------------------------------------------------------------------------- #
+def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_factor):
+    """
+    Everything between the raw skeleton graph and the ordered branch table:
+    pruning, component filtering, cycle breaking, ordering, smoothing.
+
+    `base_graph` is never modified -- it is copied on entry -- so this can be
+    called repeatedly with different pruning strengths on one skeleton, which
+    is what the sensitivity sweep does. Returns None when nothing survives.
+    """
+    graph = base_graph.copy()
+    pruned = prune_spurs(graph, radii, args.min_branch_length, radius_factor)
+    if graph.number_of_nodes() == 0:
+        return None
+
+    # measure the fragmentation before dropping anything, then restrict
+    parts = component_lengths(graph)
+    if not args.all_components and len(parts) > 1:
+        graph.remove_nodes_from(set().union(*(nodes for _, nodes in parts[1:])))
+    dropped = drop_small_components(graph, args.min_component_length)
+    if graph.number_of_nodes() == 0:
+        return None
+
+    cycles = graph.number_of_edges() - graph.number_of_nodes() + nx.number_connected_components(graph)
+    broken = [] if args.keep_cycles else break_cycles(graph, radii)
+    # a cut loop becomes a dead end, which is a spur like any other
+    repruned = prune_spurs(graph, radii, args.min_branch_length, radius_factor) if broken else 0
+    if graph.number_of_nodes() == 0:
+        return None
+
+    root_voxel = None
+    if args.root is not None:
+        root_voxel = np.asarray(args.root, float) * args.factors + 0.5 * (args.factors - 1.0)
+    branches = extract_branches(graph)
+    ordered = order_branches(graph, branches, positions, radii, root_voxel)
+    smooth = smooth_centerline(ordered, world, voxel_size, args.smoothing, args.max_shift)
+    table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size))
+    converged = diameter_defined_strahler(table)
+
+    return {"graph": graph, "table": table, "smooth": smooth, "parts": parts,
+            "pruned": pruned + repruned, "dropped": dropped, "broken": broken,
+            "cycles": int(cycles), "dd_converged": converged}
+
+
+def summarize(result, ordering, order_range, min_diameter):
+    """
+    Numbers the branches with the chosen ordering, then aggregates them both
+    ways -- one row per order for segments, one for elements -- and fits the
+    ratios on each.
+    """
+    table, smooth = result["table"], result["smooth"]
+    for entry in table:
+        entry["order"] = entry[ordering]
+    elements = build_elements(table, ordering, smooth)
+    summaries = {"segment": order_summary(table, "order"), "element": order_summary(elements, "order")}
+    ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter)
+              for counting, rows in summaries.items()}
+    return elements, summaries, ratios
+
+
+def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors_list):
+    """
+    Re-runs the whole post-skeleton stage for a range of pruning strengths.
+
+    Pruning is the one free parameter of this pipeline that no measurement
+    constrains, and it acts precisely on the terminal branches, i.e. on the
+    lowest orders, i.e. on the steepest end of every semi-log fit. If the
+    ratios move across a plausible range of k then they are a property of the
+    pruning and not of the tree, and the sweep is the only thing that can
+    tell the two apart. Report it next to the ratios, not instead of them.
+    """
+    rows = []
+    for k in factors_list:
+        result = build_tree(base_graph, positions, radii, world, voxel_size, args, k)
+        if result is None:
+            rows.append({"radius_factor": k, "n_branches": 0, "n_elements": 0, "n_leaves": 0,
+                         "R_b": None, "R_d": None, "R_l": None, "r2_b": None, "r2_d": None,
+                         "r2_l": None, "order_min": None, "order_max": None})
+            continue
+        elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
+                                                args.fit_min_voxels * voxel_size)
+        fits = ratios[args.count]["fits"]
+        orders = ratios[args.count]["orders"]
+        rows.append({
+            "radius_factor": k,
+            "n_branches": len(result["table"]),
+            "n_elements": len(elements),
+            "n_leaves": sum(1 for b in result["table"] if b["is_terminal"]),
+            "R_b": fits["R_b"]["ratio"] if fits["R_b"] else None,
+            "R_d": fits["R_d"]["ratio"] if fits["R_d"] else None,
+            "R_l": fits["R_l"]["ratio"] if fits["R_l"] else None,
+            "r2_b": fits["R_b"]["r2"] if fits["R_b"] else None,
+            "r2_d": fits["R_d"]["r2"] if fits["R_d"] else None,
+            "r2_l": fits["R_l"]["r2"] if fits["R_l"] else None,
+            "order_min": min(orders) if orders else None,
+            "order_max": max(orders) if orders else None,
+        })
+    return rows
+
+
+def print_sweep(rows, ordering, counting):
+    """Prints the ratios against the pruning strength, and their spread."""
+    print(f"\n=== pruning sensitivity ({ordering}, {counting}s) ===")
+    print("    k  branches  elements  leaves   orders    R_b    R2     R_d    R2     R_l    R2")
+    for row in rows:
+        def cell(value, width=6, digits=3):
+            return f"{value:{width}.{digits}f}" if value is not None else " " * (width - 1) + "-"
+        span = (f"{row['order_min']:2d}..{row['order_max']:<2d}"
+                if row["order_min"] is not None else "     -")
+        print(f"{row['radius_factor']:5.2f} {row['n_branches']:9d} {row['n_elements']:9d} "
+              f"{row['n_leaves']:7d}   {span}  {cell(row['R_b'])} {cell(row['r2_b'], 5, 3)} "
+              f"{cell(row['R_d'])} {cell(row['r2_d'], 5, 3)} "
+              f"{cell(row['R_l'])} {cell(row['r2_l'], 5, 3)}")
+    if len({row["n_branches"] for row in rows}) < max(2, len(rows) // 2):
+        print("  note: most of the sweep gave the same tree -- the absolute floor "
+              "--min-branch-length is what is pruning, not k. Set it to 0 to sweep k alone")
+    for name in ("R_b", "R_d", "R_l"):
+        values = np.array([row[name] for row in rows if row[name] is not None], float)
+        if values.size < 2:
+            continue
+        spread = float(values.max() - values.min())
+        print(f"  {name}: {values.min():.3f}..{values.max():.3f} over the sweep "
+              f"({spread / values.mean():.1%} of its mean)"
+              + ("   <- driven by the pruning, not by the tree" if spread / values.mean() > 0.10 else ""))
+
+
+SWEEP_COLUMNS = ("radius_factor", "n_branches", "n_elements", "n_leaves",
+                 "order_min", "order_max", "R_b", "r2_b", "R_d", "r2_d", "R_l", "r2_l")
+
+
+# --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", required=True, help="Pulmonary artery mask (nifti)")
@@ -916,18 +1427,41 @@ def main():
     parser.add_argument("--output", help="Centerline mask to write (nifti, input grid). Default: "
                                          "<input>_centerline.nii.gz next to the input mask")
     parser.add_argument("--csv", help="Per-point CSV to write")
-    parser.add_argument("--branches-csv", help="Per-branch CSV to write")
-    parser.add_argument("--orders-csv", help="Per-order (generation or Strahler) CSV to write")
+    parser.add_argument("--branches-csv", help="Per-branch (segment) CSV to write")
+    parser.add_argument("--elements-csv", help="Per-element CSV to write")
+    parser.add_argument("--orders-csv", help="Per-order CSV to write, for the --count unit")
+    parser.add_argument("--ratios-csv", help="R_b / R_d / R_l with their confidence intervals")
     parser.add_argument("--bifurcations-csv", help="Per-bifurcation CSV to write")
     parser.add_argument("--breakpoints-csv", help="CSV of the leaves that end too early, with their coordinates")
     parser.add_argument("--quality-csv", help="Single-row CSV of the quality metrics, to concatenate over cases")
+    parser.add_argument("--sweep-csv", help="Ratios against the pruning strength, one row per k")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
-    parser.add_argument("--no-report", action="store_true", help="Skip the printed anatomical report")
-    parser.add_argument("--ordering", choices=("generation", "strahler", "bfs_generation"), default="generation",
+    parser.add_argument("--no-report", action="store_true",
+                        help="Skip the per-order, leaf and bifurcation tables. The ratios and the "
+                             "quality metrics are printed either way")
+    parser.add_argument("--ordering", choices=("generation", "strahler", "strahler_dd", "bfs_generation"),
+                        default="generation",
                         help="How branches are numbered in the report and in --paint order. "
                              "generation: the widest daughter continues the parent (main path); "
                              "strahler: counted up from the tips; "
+                             "strahler_dd: diameter-defined Strahler, the one to fit the ratios on; "
                              "bfs_generation: raw junction count from the root. Default: generation")
+    parser.add_argument("--count", choices=("segment", "element"), default="segment",
+                        help="Unit of the per-order table and of the ratios. A segment runs between "
+                             "two bifurcations, an element is a run of segments of the same order. "
+                             "Both are always fitted and both are printed; this picks the one the "
+                             "per-order table and --orders-csv describe. Default: segment")
+    parser.add_argument("--fit-orders", type=int, nargs=2, metavar=("MIN", "MAX"), default=None,
+                        help="Orders the ratios are fitted over. Fix this before looking at the "
+                             "results. Default: every order whose mean diameter clears "
+                             "--fit-min-voxels")
+    parser.add_argument("--fit-min-voxels", type=float, default=3.0,
+                        help="An order whose mean diameter is under this many voxels is left out of "
+                             "the fit: under three voxels of diameter the distance transform is "
+                             "quantized to the grid and has no dynamic range left. Default: 3")
+    parser.add_argument("--sweep-k", type=float, nargs="+", default=None, metavar="K",
+                        help="Re-run the analysis for each of these --radius-factor values and "
+                             "tabulate the ratios against them, e.g. --sweep-k 0.5 1 1.5 2 2.5 3")
     parser.add_argument("--paint", choices=("binary", "order", "branch"), default="binary",
                         help="Voxel value in the output mask. Default: binary")
     parser.add_argument("--smoothing", type=int, default=20,
@@ -950,6 +1484,10 @@ def main():
                         help="Also prune a terminal branch shorter than this many local radii. 0 disables. Default: 1")
     parser.add_argument("--min-component-length", type=float, default=10.0,
                         help="Skeleton components shorter than this (mm) are dropped. Default: 10")
+    parser.add_argument("--keep-cycles", action="store_true",
+                        help="Do not cut the loops of the skeleton. They are artefacts and they make "
+                             "the Strahler orders downstream of them meaningless, so this is for "
+                             "inspection only")
     parser.add_argument("--spacing", type=float, default=None,
                         help="Isotropic voxel size (mm) used for skeletonization. Default: smallest input spacing")
     parser.add_argument("--no-resample", action="store_true", help="Skeletonize on the input grid")
@@ -980,6 +1518,7 @@ def main():
         work_mask, work_affine, factors, work_spacing = resample_isotropic(mask, affine, spacing, args.spacing)
         if not np.allclose(factors, 1.0):
             print(f"resampled to {np.round(work_spacing, 3).tolist()} mm, shape={work_mask.shape}")
+    args.factors = factors
 
     # the EDT stops at the last inside voxel centre, so the wall sits about
     # half a voxel further out
@@ -987,52 +1526,54 @@ def main():
     skeleton = skeletonize(work_mask) > 0  # older skimage returns 0/255 uint8 in 3D
     print(f"skeleton: {int(skeleton.sum())} voxels")
 
-    graph, positions = build_voxel_graph(skeleton, work_spacing)
-    contract_junction_clusters(graph, positions, work_mask)
-    update_edge_weights(graph, positions, work_spacing)
+    base_graph, positions = build_voxel_graph(skeleton, work_spacing)
+    contract_junction_clusters(base_graph, positions, work_mask)
+    update_edge_weights(base_graph, positions, work_spacing)
     radii = radius_map[tuple(np.rint(positions).astype(int).T)]
-
-    pruned = prune_spurs(graph, radii, args.min_branch_length, args.radius_factor)
-    if graph.number_of_nodes() == 0:
-        raise SystemExit("nothing left after pruning, lower --min-branch-length")
-
-    # measure the fragmentation before dropping anything, then restrict
-    parts = component_lengths(graph)
-    if not args.all_components:
-        graph.remove_nodes_from(set().union(*(nodes for _, nodes in parts[1:])) if len(parts) > 1 else [])
-    dropped = drop_small_components(graph, args.min_component_length)
-    print(f"pruned {pruned} spur voxels, kept {graph.number_of_nodes()} skeleton voxels "
-          f"in {nx.number_connected_components(graph)} component(s), dropped {dropped} short ones")
-    if graph.number_of_nodes() == 0:
-        raise SystemExit("nothing left, lower --min-component-length")
-
-    branches = extract_branches(graph)
-    root_voxel = None
-    if args.root is not None:
-        root_voxel = np.asarray(args.root, float) * factors + 0.5 * (factors - 1.0)
-    ordered = order_branches(graph, branches, positions, radii, root_voxel)
 
     voxel_size = float(work_spacing.min())
     world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
-    smooth = smooth_centerline(ordered, world, voxel_size, args.smoothing, args.max_shift)
-    table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size))
-    for entry in table:
-        entry["order"] = entry[args.ordering]
-    summary = order_summary(table, "order")
+    result = build_tree(base_graph, positions, radii, world, voxel_size, args, args.radius_factor)
+    if result is None:
+        raise SystemExit("nothing left after pruning, lower --min-branch-length or --radius-factor")
+
+    graph, table, smooth, parts = result["graph"], result["table"], result["smooth"], result["parts"]
+    print(f"pruned {result['pruned']} spur voxels, kept {graph.number_of_nodes()} skeleton voxels "
+          f"in {nx.number_connected_components(graph)} component(s), dropped {result['dropped']} short ones")
+    if result["broken"]:
+        thinnest = min(r for _, _, r in result["broken"])
+        print(f"cut {len(result['broken'])} loop(s) out of the skeleton "
+              f"(thinnest cut at r={thinnest:.2f} mm) -- they are welds between touching "
+              f"vessels, and the orders downstream of them would be undefined")
+    if not result["dd_converged"]:
+        print("diameter-defined Strahler did not converge; the last iteration is reported")
+
+    elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
+                                            args.fit_min_voxels * voxel_size)
+    summary = summaries[args.count]
     bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size)
 
     lengths = np.array([b["length_mm"] for b in table])
     raw = sum(polyline_length(world[b["nodes"]]) for b in table)
     endpoints = sum(1 for _, d in graph.degree() if d == 1)
     junctions = sum(1 for _, d in graph.degree() if d >= 3)
-    print(f"branches: {len(table)}  endpoints: {endpoints}  junctions: {junctions}")
+    print(f"branches: {len(table)} segments in {len(elements)} elements  "
+          f"endpoints: {endpoints}  junctions: {junctions}")
     print(f"total centerline length: {lengths.sum():.1f} mm  (longest branch {lengths.max():.1f} mm, "
           f"raw voxel path {raw:.1f} mm)")
     print(f"{args.ordering}: {min(r['order'] for r in summary)}..{max(r['order'] for r in summary)}  "
           f"radius: {radii.min():.2f}..{radii.max():.2f} mm")
     if not args.no_report:
         print_analysis(graph, table, summary, bifurcations, args.ordering,
-                       args.murray_min_voxels * voxel_size)
+                       args.murray_min_voxels * voxel_size, args.count)
+    # the ratios are the point of the run, so they survive --no-report
+    for counting in ("segment", "element"):
+        print_ratios(ratios[counting], args.ordering, counting)
+
+    sweep = None
+    if args.sweep_k:
+        sweep = sweep_pruning(base_graph, positions, radii, world, voxel_size, args, args.sweep_k)
+        print_sweep(sweep, args.ordering, args.count)
 
     breakpoint_radius = args.breakpoint_radius
     if breakpoint_radius is None:
@@ -1040,7 +1581,8 @@ def main():
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
-                              n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order)
+                              n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
+                              result["cycles"], len(result["broken"]))
     print_quality(metrics, breakpoints)
 
     output = args.output or default_output_path(args.input)
@@ -1053,9 +1595,17 @@ def main():
     if args.branches_csv:
         write_table_csv(args.branches_csv, table, BRANCH_COLUMNS)
         print(f"wrote {args.branches_csv}")
+    if args.elements_csv:
+        write_table_csv(args.elements_csv, elements, ELEMENT_COLUMNS)
+        print(f"wrote {args.elements_csv}")
     if args.orders_csv:
         write_table_csv(args.orders_csv, summary, ORDER_COLUMNS)
         print(f"wrote {args.orders_csv}")
+    if args.ratios_csv:
+        rows = [row for counting in ("segment", "element")
+                for row in ratio_rows(ratios[counting], args.ordering, counting)]
+        write_table_csv(args.ratios_csv, rows, RATIO_COLUMNS)
+        print(f"wrote {args.ratios_csv}")
     if args.bifurcations_csv:
         write_table_csv(args.bifurcations_csv, bifurcations, BIFURCATION_COLUMNS)
         print(f"wrote {args.bifurcations_csv}")
@@ -1065,6 +1615,9 @@ def main():
     if args.quality_csv:
         write_table_csv(args.quality_csv, [metrics], QUALITY_COLUMNS)
         print(f"wrote {args.quality_csv}")
+    if args.sweep_csv and sweep:
+        write_table_csv(args.sweep_csv, sweep, SWEEP_COLUMNS)
+        print(f"wrote {args.sweep_csv}")
     if args.vtk:
         write_vtk(args.vtk, table, smooth, radii)
         print(f"wrote {args.vtk}")
