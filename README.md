@@ -296,12 +296,31 @@ about the others.
 ### Orphan components
 
 Metric 1 says how much of the tree is not analysed. It does not say why, and
-the two reasons call for opposite corrections: a **break in continuity** (real
-vessel, the model lost a few voxels of contrast, the fix is upstream
-connectivity) or a **false positive** (the fix is specificity). The
-discriminating measurement is the distance to the main tree, so it is
-reported per component, wall to wall rather than centreline to centreline —
-two vessels whose axes are 4 mm apart are touching if both are 2 mm across.
+"52% connectivity" aggregates three unrelated defects with three different
+corrections and three different costs. They are reported separately:
+
+```
+=== orphan components (39 outside the main tree, 463 mm) ===
+  severed      8 comps     309.3 mm  66.8%  median r 1.91 mm    A/V classification cut the pedicle
+      rejoins the trunk as soon as the class boundary is ignored, so the vessel is there and
+      correctly classified -- repairable in post-processing, no retraining
+  hole         5 comps      73.4 mm  15.8%  median r 1.50 mm    a real hole, in neither class
+      the vessel is missing over several millimetres: a frank false negative, from low contrast or
+      motion. Retraining, or geometric bridging if you accept it
+  dust        26 comps      80.7 mm  17.4%  median r 1.50 mm    speckle under the resolution floor
+      too short to be vessel and sitting on the quantization floor -- a size filter removes it
+      with no argument
+```
+
+`--dust-length` (10 mm) draws the speckle line, and size is judged first: a
+two-millimetre speck that happens to touch the other class is speckle, not a
+severed pedicle, and letting it in would inflate the very number the repair
+is judged on. `severed` versus `hole` is decided by the union test below, so
+without a comparison mask both collapse into `detached`.
+
+Underneath, the per-component measurements. The distance to the main tree is
+wall to wall rather than centreline to centreline — two vessels whose axes are
+4 mm apart are touching if both are 2 mm across.
 
 ```
 === orphan components (39 outside the main tree) ===
@@ -395,12 +414,36 @@ totals go into `--quality-csv`.
   the fix is the A/V classification head, not the sensitivity
 ```
 
-Run it both ways — `--label 4 --compare-label 3` then `--label 3
---compare-label 4` — and concatenate the two `--quality-csv` rows. One tree
-severed and the other clean means the classifier hands crossings
+#### The symmetric control
+
+Run it both ways and concatenate the two `--quality-csv` rows:
+
+```bash
+python centerline.py --input av.nii.gz --label 1 --compare-label 2 --quality-csv qual_A.csv ...
+python centerline.py --input av.nii.gz --label 2 --compare-label 1 --quality-csv qual_V.csv ...
+```
+
+`--quality-csv` opens with a structural block — `mask_volume_ml`,
+`n_segments`, `n_elements`, `n_leaves`, `total_length_mm`, `max_order`,
+`ordering` — precisely so those two rows are a readable pair:
+
+```
+                                         label 4     label 3
+mask_volume_ml                          194.8770    215.0660
+n_segments                                   620         754
+n_leaves                                     325         387
+max_order                                      8           7
+largest_component_length_fraction         0.9530      0.9424
+orphan_length_severed_mm                309.3434    529.4932
+orphan_length_holed_mm                   73.3833    107.4283
+```
+
+One tree severed and the other clean means the classifier hands crossings
 preferentially to one class; both severed means the exchanges go both ways;
-neither severed means the continuity problem is not an A/V confusion at all
-and the fragments have to be explained some other way.
+neither severed means the continuity problem is not an A/V confusion at all.
+And a volume ratio far from 1 between the two classes is itself a finding —
+the two trees drain the same parenchyma, so a 2:1 imbalance is a class bias
+or a leak, not anatomy, and it would explain a one-sided severing directly.
 
 5. **Breakpoints.** Terminal branches still close to the main path
    (`--breakpoint-order`) yet several millimetres wide

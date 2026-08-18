@@ -50,6 +50,7 @@ prints is anatomy and how much is the voxel size.
 import argparse
 import itertools
 import os
+import textwrap
 from collections import defaultdict, deque
 
 import networkx as nx
@@ -1277,109 +1278,143 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
     return sorted(rows, key=lambda row: -row["length_mm"])
 
 
+# The three things an orphan component can be. They are not variations of one
+# defect, they have nothing to do with each other, and each has its own fix --
+# so a single "52% connectivity" number aggregates three unrelated problems
+# and points at none of them.
+ORPHAN_POPULATIONS = ("severed", "hole", "dust", "detached")
+
+POPULATION_NOTES = {
+    "severed": ("A/V classification cut the pedicle",
+                "rejoins the trunk as soon as the class boundary is ignored, so the vessel is "
+                "there and correctly classified -- repairable in post-processing, no retraining"),
+    "hole": ("a real hole, in neither class",
+             "the vessel is missing over several millimetres: a frank false negative, from low "
+             "contrast or motion. Retraining, or geometric bridging if you accept it"),
+    "dust": ("speckle under the resolution floor",
+             "too short to be vessel and sitting on the quantization floor -- a size filter "
+             "removes it with no argument"),
+    "detached": ("detached, cause undetermined",
+                 "no comparison mask was given, so the A/V cut and the real hole cannot be "
+                 "told apart -- pass --compare-label or --compare-mask"),
+}
+
+
+def classify_orphans(orphans, dust_length):
+    """
+    Sorts the orphan components into the three populations, in priority order.
+
+    Size comes first: a two-millimetre speck that happens to touch the other
+    class is speckle, not a severed pedicle, and letting it into that group
+    would inflate exactly the number the repair is judged on.
+    """
+    for row in orphans:
+        if row["length_mm"] < dust_length:
+            row["population"] = "dust"
+        elif row.get("union_reconnects") is None:
+            row["population"] = "detached"
+        elif row["union_reconnects"]:
+            row["population"] = "severed"
+        else:
+            row["population"] = "hole"
+    return orphans
+
+
+def orphan_populations(orphans, min_length=0.0):
+    """Count, length and median calibre of each population."""
+    kept = [row for row in orphans if row["length_mm"] >= min_length]
+    out = {}
+    for name in ORPHAN_POPULATIONS:
+        group = [row for row in kept if row["population"] == name]
+        out[name] = {
+            "n": len(group),
+            "length_mm": float(sum(row["length_mm"] for row in group)),
+            "median_radius_mm": float(np.median([row["median_radius_mm"] for row in group]))
+            if group else None,
+        }
+    out["total_length_mm"] = float(sum(row["length_mm"] for row in kept))
+    return out
+
+
 def orphan_split(orphans, min_length=0.0):
-    """Totals of the orphan components on each side of the bridgeable line."""
+    """Totals on each side of the bridgeable line, kept for the gap-based view."""
     kept = [row for row in orphans if row["length_mm"] >= min_length]
     bridgeable = [row for row in kept if row["bridgeable"]]
     isolated = [row for row in kept if not row["bridgeable"]]
-    severed = [row for row in kept if row.get("union_reconnects")]
-    holed = [row for row in kept if row.get("union_reconnects") == 0]
     return {
         "n_bridgeable": len(bridgeable), "n_isolated": len(isolated),
         "length_bridgeable_mm": float(sum(row["length_mm"] for row in bridgeable)),
         "length_isolated_mm": float(sum(row["length_mm"] for row in isolated)),
-        "n_severed": len(severed), "n_holed": len(holed),
-        "length_severed_mm": float(sum(row["length_mm"] for row in severed)),
-        "length_holed_mm": float(sum(row["length_mm"] for row in holed)),
-        "median_radius_bridgeable_mm": float(np.median([r["median_radius_mm"] for r in bridgeable]))
-        if bridgeable else None,
-        "median_radius_isolated_mm": float(np.median([r["median_radius_mm"] for r in isolated]))
-        if isolated else None,
     }
 
 
-def print_orphans(orphans, wall_gap, compare_name=None, min_length=10.0, show=8):
-    """Prints the two populations of orphan components and the worst of them."""
+def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8):
+    """
+    Prints the three populations of orphan components, then the worst of them.
+
+    Reported separately on purpose. They are three unrelated defects with
+    three different corrections and three different costs, and the aggregate
+    "fraction of centerline outside the main tree" is the one number that
+    hides which of them dominates.
+    """
     if not orphans:
         return
-    total = orphan_split(orphans)
-    substantial = [row for row in orphans if row["length_mm"] >= min_length]
-    big = orphan_split(substantial)
+    totals = orphan_populations(orphans)
+    big = orphan_populations(orphans, dust_length)
+    substantial = sorted((row for row in orphans if row["length_mm"] >= dust_length),
+                         key=lambda row: -row["length_mm"])
 
-    print(f"\n=== orphan components ({len(orphans)} outside the main tree) ===")
-    print(f"broken off (wall gap <= {wall_gap:.1f} mm): {total['n_bridgeable']:4d} components, "
-          f"{total['length_bridgeable_mm']:8.1f} mm"
-          + (f", median radius {total['median_radius_bridgeable_mm']:.2f} mm"
-             if total["median_radius_bridgeable_mm"] is not None else ""))
-    print(f"isolated   (wall gap >  {wall_gap:.1f} mm): {total['n_isolated']:4d} components, "
-          f"{total['length_isolated_mm']:8.1f} mm"
-          + (f", median radius {total['median_radius_isolated_mm']:.2f} mm"
-             if total["median_radius_isolated_mm"] is not None else ""))
-    print(f"  of the {len(substantial)} over {min_length:.0f} mm: {big['n_bridgeable']} broken off "
-          f"({big['length_bridgeable_mm']:.0f} mm), {big['n_isolated']} isolated "
-          f"({big['length_isolated_mm']:.0f} mm)")
-    print(f"  'isolated' only means further than {wall_gap:.1f} mm -- a real vessel that dropped "
-          f"out over a centimetre of poor contrast lands there too. Use the bridging curve "
-          f"(--bridge-sweep) and the coordinates below before calling any of it a false positive")
+    print(f"\n=== orphan components ({len(orphans)} outside the main tree, "
+          f"{totals['total_length_mm']:.0f} mm) ===")
+    for name in ORPHAN_POPULATIONS:
+        group = totals[name]
+        if not group["n"]:
+            continue
+        headline, note = POPULATION_NOTES[name]
+        share = group["length_mm"] / totals["total_length_mm"] if totals["total_length_mm"] else 0.0
+        radius = (f"median r {group['median_radius_mm']:.2f} mm"
+                  if group["median_radius_mm"] is not None else "")
+        print(f"  {name:<9} {group['n']:4d} comps  {group['length_mm']:8.1f} mm  {share:5.1%}  "
+              f"{radius:<18}  {headline}")
+        for wrapped in textwrap.wrap(note, 92):
+            print(f"      {wrapped}")
+    if compare_name:
+        print(f"  severed / hole was decided by labelling the union with {compare_name}, "
+              f"which needs no threshold")
+    print(f"  the split at {dust_length:.0f} mm is --dust-length; above it, the components are "
+          f"the ones worth repairing")
 
-    united = [row for row in orphans if row.get("union_reconnects") is not None]
-    if united:
-        big = orphan_split(united, min_length)
-        print(f"  through {compare_name}: {total['length_severed_mm']:.0f} mm in "
-              f"{total['n_severed']} components rejoin the trunk once the two classes are taken "
-              f"together, {total['length_holed_mm']:.0f} mm in {total['n_holed']} do not")
-        print(f"  of the ones over {min_length:.0f} mm: {big['length_severed_mm']:.0f} mm rejoin, "
-              f"{big['length_holed_mm']:.0f} mm do not")
-        if total["length_severed_mm"] > total["length_holed_mm"]:
-            print("  the dominant defect is therefore a severed pedicle, not a missing vessel: "
-                  "these fragments are correctly classified and so is the trunk, but the vessel "
-                  "joining them was given to the other class at a crossing. The fix is the A/V "
-                  "classification head, not the sensitivity")
-        elif total["length_holed_mm"] > 0:
-            print("  most of it does not rejoin even through the other class, so these are real "
-                  "holes: bridging or plain false negatives, not an A/V confusion")
-
+    if not substantial:
+        return
     compared = [row for row in substantial if row["compare_gap_mm"] is not None]
+    header = "  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis"
+    header += "   cmp_gap  cmp_ovl" if compared else ""
+    print(header + "  population  fragment voxel      nearest on trunk")
+    for row in substantial[:show]:
+        line = (f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
+                f"{row['max_radius_mm']:6.2f} {row['gap_wall_mm']:9.2f} {row['gap_axis_mm']:9.2f}")
+        if compared:
+            line += (f" {row['compare_gap_mm']:9.2f} {row['compare_overlap']:8.2f}"
+                     if row["compare_gap_mm"] is not None else " " * 18)
+        print(line + f"  {row['population']:>10}  ({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
+                     f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
+    if len(substantial) > show:
+        print(f"  ... {len(substantial) - show} more over {dust_length:.0f} mm, "
+              f"use --orphans-csv for the full list")
     if compared:
-        near = [row for row in compared if row["nearer"] == "compare"]
         inside = [row for row in compared if row["compare_overlap"] >= 0.5]
-        print(f"  against {compare_name}: {len(inside)}/{len(compared)} have more than half their "
-              f"centerline inside it ({sum(r['length_mm'] for r in inside):.0f} mm), and "
-              f"{len(near)} merely sit closer to it than to the main tree "
-              f"({sum(r['length_mm'] for r in near):.0f} mm)")
-        if inside:
-            print("  the overlapping ones are A/V labelling errors, not false positives -- the fix "
-                  "is the classification head rather than the sensitivity")
-        if len(near) > len(inside):
-            print("  read the merely-close ones with care: arteries and veins run alongside each "
-                  "other everywhere in the lung, so proximity alone is nearly free. It is the "
-                  "overlap column that carries the evidence, and a fragment that touches the other "
-                  "mask without lying inside it is a kissing-vessel geometry, not a swap")
+        print(f"  {len(inside)}/{len(compared)} of them have more than half their centerline "
+              f"inside {compare_name}: those would be outright A/V swaps rather than cut pedicles")
+        if len(inside) < len(compared):
+            print("  proximity alone proves nothing -- arteries and veins run alongside each other "
+                  "everywhere, so only the overlap column and the union test carry evidence")
 
-    if substantial:
-        header = "  len_mm  n_pts  med_r  max_r  gap_wall  gap_axis"
-        header += "   cmp_gap  cmp_ovl  nearer" if compared else ""
-        header += "  union" if united else ""
-        print(header + "  fragment voxel      nearest on trunk")
-        for row in substantial[:show]:
-            line = (f"  {row['length_mm']:6.1f} {row['n_points']:6d} {row['median_radius_mm']:6.2f} "
-                    f"{row['max_radius_mm']:6.2f} {row['gap_wall_mm']:9.2f} {row['gap_axis_mm']:9.2f}")
-            if compared:
-                line += (f" {row['compare_gap_mm']:9.2f} {row['compare_overlap']:8.2f}  "
-                         f"{row['nearer']:>6}" if row["compare_gap_mm"] is not None
-                         else " " * 27)
-            if united:
-                line += f"  {'joins' if row['union_reconnects'] else ' hole':>5}"
-            print(line + f"  ({row['i']:4d},{row['j']:4d},{row['k']:4d})  "
-                         f"({row['main_i']:4d},{row['main_j']:4d},{row['main_k']:4d})")
-        if len(substantial) > show:
-            print(f"  ... {len(substantial) - show} more over {min_length:.0f} mm, "
-                  f"use --orphans-csv for the full list")
 
 
 def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                     n_volume_components, voxel_size, min_radius, max_order,
-                    n_cycles=0, n_cycles_broken=0, orphans=()):
+                    n_cycles=0, n_cycles_broken=0, orphans=(), volume_ml=None,
+                    n_elements=None, ordering=""):
     """
     The five numbers that say whether a segmentation can be trusted.
 
@@ -1389,27 +1424,39 @@ def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fract
     A defect in one implies nothing about the others.
     """
     total_length = sum(length for length, _ in parts)
+    populations, split = orphan_populations(orphans), orphan_split(orphans)
     leaves = [b for b in table if b["is_terminal"]]
+    orders = [b["order"] for b in table if b["order"] >= 0]
     floor = resolution_floor(voxel_size)
     at_floor = [b for b in leaves if b["tip_radius_mm"] <= floor * 1.001]
     murray = np.array([b["murray_exponent"] for b in bifurcations
                        if b["well_resolved"] and b["murray_exponent"] is not None])
 
     return {
+        # the structural block: what the symmetric control is read on, so two
+        # runs on the two classes concatenate into a comparable pair of rows
+        "ordering": ordering,
+        "mask_volume_ml": volume_ml,
+        "n_segments": len(table),
+        "n_elements": n_elements,
+        "total_length_mm": float(sum(b["length_mm"] for b in table)),
+        "max_order": max(orders) if orders else None,
         "n_components": len(parts),
         "n_volume_components": n_volume_components,
         "largest_component_volume_fraction": volume_fraction,
         "largest_component_length_fraction": parts[0][0] / total_length if total_length else 0.0,
         "length_outside_largest_mm": total_length - parts[0][0],
         "n_fragments_over_10mm": sum(1 for length, _ in parts[1:] if length >= 10.0),
-        "n_orphans_bridgeable": orphan_split(orphans)["n_bridgeable"],
-        "n_orphans_isolated": orphan_split(orphans)["n_isolated"],
-        "orphan_length_bridgeable_mm": orphan_split(orphans)["length_bridgeable_mm"],
-        "orphan_length_isolated_mm": orphan_split(orphans)["length_isolated_mm"],
-        "n_orphans_severed": orphan_split(orphans)["n_severed"],
-        "n_orphans_holed": orphan_split(orphans)["n_holed"],
-        "orphan_length_severed_mm": orphan_split(orphans)["length_severed_mm"],
-        "orphan_length_holed_mm": orphan_split(orphans)["length_holed_mm"],
+        "n_orphans_bridgeable": split["n_bridgeable"],
+        "n_orphans_isolated": split["n_isolated"],
+        "orphan_length_bridgeable_mm": split["length_bridgeable_mm"],
+        "orphan_length_isolated_mm": split["length_isolated_mm"],
+        "n_orphans_severed": populations["severed"]["n"],
+        "n_orphans_holed": populations["hole"]["n"],
+        "n_orphans_dust": populations["dust"]["n"],
+        "orphan_length_severed_mm": populations["severed"]["length_mm"],
+        "orphan_length_holed_mm": populations["hole"]["length_mm"],
+        "orphan_length_dust_mm": populations["dust"]["length_mm"],
         "n_leaves": len(leaves),
         "resolution_floor_mm": floor,
         "leaves_at_floor_fraction": len(at_floor) / len(leaves) if leaves else 0.0,
@@ -1636,16 +1683,18 @@ BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "l
 
 ORPHAN_COLUMNS = ("component_id", "length_mm", "n_points", "median_radius_mm", "max_radius_mm",
                   "gap_axis_mm", "gap_wall_mm", "bridgeable",
-                  "compare_gap_mm", "compare_overlap", "nearer", "union_reconnects",
+                  "population", "compare_gap_mm", "compare_overlap", "nearer", "union_reconnects",
                   "i", "j", "k", "main_i", "main_j", "main_k")
 
-QUALITY_COLUMNS = ("largest_component_length_fraction", "largest_component_volume_fraction",
+QUALITY_COLUMNS = ("ordering", "mask_volume_ml", "n_segments", "n_elements", "n_leaves",
+                   "total_length_mm", "max_order",
+                   "largest_component_length_fraction", "largest_component_volume_fraction",
                    "length_outside_largest_mm", "n_components", "n_fragments_over_10mm",
                    "n_orphans_bridgeable", "n_orphans_isolated",
                    "orphan_length_bridgeable_mm", "orphan_length_isolated_mm",
-                   "n_orphans_severed", "n_orphans_holed",
-                   "orphan_length_severed_mm", "orphan_length_holed_mm",
-                   "leaves_at_floor_fraction", "n_leaves", "resolution_floor_mm",
+                   "n_orphans_severed", "n_orphans_holed", "n_orphans_dust",
+                   "orphan_length_severed_mm", "orphan_length_holed_mm", "orphan_length_dust_mm",
+                   "leaves_at_floor_fraction", "resolution_floor_mm",
                    "murray_median", "murray_q1", "murray_q3", "n_murray",
                    "n_cycles", "n_cycles_broken", "n_breakpoints", "breakpoints_fraction")
 
@@ -1901,6 +1950,9 @@ def main():
                              "centerline ends up in the largest component. Replaces the "
                              "hand-placed --orphan-gap with the radius at which the tree actually "
                              "closes. Pass no value for one to six voxels")
+    parser.add_argument("--dust-length", type=float, default=10.0,
+                        help="An orphan component shorter than this (mm) is counted as speckle "
+                             "rather than as a severed vessel or a hole. Default: 10")
     parser.add_argument("--keep-cycles", action="store_true",
                         help="Do not cut the loops of the skeleton. They are artefacts and they make "
                              "the Strahler orders downstream of them meaningless, so this is for "
@@ -2022,13 +2074,16 @@ def main():
         breakpoint_radius = 2.0 * voxel_size
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
-    orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
-                              compare_distance, compare_inside, compare_union)
+    orphans = classify_orphans(
+        analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
+                        compare_distance, compare_inside, compare_union), args.dust_length)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
-                              result["cycles"], len(result["broken"]), orphans)
+                              result["cycles"], len(result["broken"]), orphans,
+                              float(mask.sum() * np.prod(spacing) / 1000.0), len(elements),
+                              args.ordering)
     print_quality(metrics, breakpoints)
-    print_orphans(orphans, args.orphan_gap, compare_name)
+    print_orphans(orphans, args.orphan_gap, compare_name, args.dust_length)
 
     bridge = None
     if args.bridge_sweep is not None:
