@@ -34,6 +34,9 @@ Outputs:
     --bifurcations-csv  one row per junction (the three angles, area ratio, Murray)
     --orphans-csv   one row per component outside the main tree, with its
                     wall-to-wall distance to it and where to look
+    --reconnect-csv one row per severed pedicle: reclaimed or refused, and why
+    --branches-csv-repaired  segments after the repair, with synthetic_fraction
+    --repaired-mask the repaired mask, label 1 segmented / label 2 reclaimed
     --bridge-csv    the bridging curve: centerline recovered per dilation radius
     --sweep-csv     the ratios against the pruning strength, one row per k
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
@@ -554,7 +557,8 @@ def murray_exponent(parent_radius, child_radii):
     return float(brentq(lambda n: np.sum(ratios ** n) - 1.0, 1e-3, 50.0))
 
 
-def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIRECTION_OFFSET):
+def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIRECTION_OFFSET,
+                 synthetic=None):
     """
     Per-branch measurements, in branch order (proximal -> distal), read on
     the smoothed centerline.
@@ -563,6 +567,12 @@ def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIR
     between the two ends: 1.0 is a straight branch. The proximal and distal
     calibres are measured away from the junctions (see `branch_geometry`),
     unlike `mean_radius_mm` which averages the whole branch.
+
+    `synthetic` is the boolean map of voxels a repair put back, and
+    `synthetic_fraction` is the share of a branch's skeleton nodes that fall
+    in them. Skeleton nodes sit roughly one voxel apart, so that share is a
+    length fraction to within the sampling. It is 0 for every branch when no
+    repair ran, which is what keeps the ordinary path unchanged.
     """
     table = []
     for branch_id, (nodes, generation) in enumerate(ordered):
@@ -571,6 +581,7 @@ def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIR
         chord = float(np.linalg.norm(points[-1] - points[0]))
         values = radii[nodes]
 
+        share = 0.0 if synthetic is None else float(synthetic[nodes].mean())
         head_axis, head_calibre, head_clean = branch_geometry(
             nodes, smooth, radii, radii[nodes[0]], voxel_size, direction_offset=direction_offset)
         tail_axis, tail_calibre, tail_clean = branch_geometry(
@@ -603,6 +614,7 @@ def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIR
             # direction the branch leaves a junction by is -tail_axis
             "head_axis_clean": head_clean,
             "tail_axis_clean": tail_clean,
+            "synthetic_fraction": share,
         })
     return table
 
@@ -798,6 +810,7 @@ def build_elements(table, order_key, smooth):
             "tip_radius_mm": members[-1]["tip_radius_mm"],
             "is_terminal": members[-1]["is_terminal"],
             "nodes": nodes,
+            "synthetic_fraction": float(np.dot(weights, [m["synthetic_fraction"] for m in members])),
         })
     return elements
 
@@ -808,7 +821,7 @@ def vector_angle(u, v):
     return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
 
 
-def analyze_bifurcations(table, order_key, min_radius):
+def analyze_bifurcations(table, order_key, min_radius, positions=None, factors=None):
     """
     Measures every bifurcation: the parent branch that ends there and the
     daughters that leave it. Radii and directions come from the branch
@@ -841,6 +854,13 @@ def analyze_bifurcations(table, order_key, min_radius):
     saturate on the voxel size and the derived quantities -- the area ratio
     and above all Murray's exponent, which is a ratio raised to a power --
     stop meaning anything.
+
+    With `positions` and `factors` each junction also carries its voxel on
+    the input grid. The angles are a distribution and the tails of that
+    distribution are the interesting part: a junction whose planarity defect
+    runs to tens of degrees is not a bifurcation seen from a bad angle, it is
+    usually two neighbouring vessels welded by partial volume, and the only
+    way to settle that is to open the coordinate in a viewer.
     """
     bifurcations = []
     for parent in table:
@@ -863,8 +883,11 @@ def analyze_bifurcations(table, order_key, min_radius):
             defect = parent_1 + parent_2 - angle
 
         clean = int(parent["tail_axis_clean"] and all(c["head_axis_clean"] for c in children))
+        node = parent["nodes"][-1]
+        i, j, k = (np.rint((positions[node] + 0.5) / factors - 0.5).astype(int)
+                   if positions is not None and factors is not None else (-1, -1, -1))
         bifurcations.append({
-            "node": parent["nodes"][-1],
+            "node": node, "i": int(i), "j": int(j), "k": int(k),
             "order": parent[order_key],
             "n_children": len(children),
             "parent_radius_mm": parent_radius,
@@ -1629,7 +1652,7 @@ def check_monotonicity(rows, order_key):
             for before, after in zip(rows, rows[1:]) if after["mean_diameter_mm"] > before["mean_diameter_mm"]]
 
 
-def print_angles(bifurcations):
+def print_angles(bifurcations, show=6):
     """
     The three angles of the junction, over the bifurcations whose directions
     were fitted clear of the junction blob.
@@ -1639,6 +1662,14 @@ def print_angles(bifurcations):
     an angle quoted without the fraction it was measured on is not a
     measurement. The contaminated ones are shown underneath for comparison,
     never merged in.
+
+    The loss is not only in power. What disqualifies a junction is a daughter
+    too short relative to the parental calibre, and that is a property of the
+    branching, not noise: a small lateral branch leaving a wide trunk is
+    exactly the configuration that gets dropped. The surviving sample is
+    therefore biased towards the less asymmetric junctions, and the median
+    angle it gives is the median over that subset, not over the tree. It has
+    to be quoted that way.
     """
     pairs = [b for b in bifurcations if b["angle_deg"] is not None]
     if not pairs:
@@ -1647,6 +1678,13 @@ def print_angles(bifurcations):
     clean = [b for b in pairs if b["angle_clean"]]
     print(f"angles over the {len(clean)}/{len(pairs)} two-daughter junctions with a direction "
           f"fitted clear of the blob:")
+    if clean and len(clean) < len(pairs):
+        kept = float(np.median([b["asymmetry"] for b in clean if b["asymmetry"] is not None]))
+        dropped = [b["asymmetry"] for b in pairs if not b["angle_clean"] and b["asymmetry"] is not None]
+        print(f"  selection: what is dropped is a daughter too short for the parental calibre, "
+              f"which is a kind of branching, not noise -- median asymmetry {kept:.2f} here "
+              f"against {np.median(dropped):.2f} among the dropped. Quote the angles as the median "
+              f"over this subset, not over the tree")
     if clean:
         parent_child = [b["angle_parent_first_deg"] for b in clean] + \
                        [b["angle_parent_second_deg"] for b in clean]
@@ -1662,6 +1700,21 @@ def print_angles(bifurcations):
                   f"That is a convention fault in the directions, not anatomy -- check the sign "
                   f"of the parent axis (tail_axis looks back up the branch) before reading any "
                   f"angle below")
+        # the tail is the interesting part: a near-planar median with a few
+        # junctions far off it is not a worse measurement, it is a shortlist
+        skew = sorted((b for b in clean if b["planarity_defect_deg"] > max(30.0, 3.0 * median)),
+                      key=lambda b: -b["planarity_defect_deg"])
+        if skew and median <= 30.0:
+            print(f"  {len(skew)} junction(s) are far from planar against a median of "
+                  f"{median:.1f} deg. A bifurcation is planar to a few degrees, so these are "
+                  f"more likely two vessels welded by partial volume than a branching -- same "
+                  f"family as a skeleton cycle. Open them:")
+            for entry in skew[:show]:
+                print(f"    defect {entry['planarity_defect_deg']:6.1f} deg  parent r "
+                      f"{entry['parent_radius_mm']:4.2f} mm  at ({entry['i']:4d},{entry['j']:4d},"
+                      f"{entry['k']:4d})")
+            if len(skew) > show:
+                print(f"    ... {len(skew) - show} more, use --bifurcations-csv")
     contaminated = [b for b in pairs if not b["angle_clean"]]
     if contaminated:
         print(f"  the other {len(contaminated)}: branch too short to leave the blob, "
@@ -1791,24 +1844,30 @@ def write_table_csv(path, table, columns):
 BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "strahler_dd", "bfs_generation", "n_points",
                   "length_mm", "chord_mm", "tortuosity", "calibre_mm",
                   "mean_radius_mm", "min_radius_mm", "max_radius_mm",
-                  "proximal_calibre_mm", "distal_calibre_mm", "tip_radius_mm", "is_terminal")
+                  "proximal_calibre_mm", "distal_calibre_mm", "tip_radius_mm", "is_terminal",
+                  "synthetic_fraction")
 
 ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm",
                  "mean_length_mm", "sd_length_mm", "mean_diameter_mm", "sd_diameter_mm",
                  "mean_radius_mm", "mean_proximal_calibre_mm", "mean_distal_calibre_mm",
                  "mean_tortuosity", "mean_tip_radius_mm")
 
-BIFURCATION_COLUMNS = ("node", "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
+BIFURCATION_COLUMNS = ("node", "i", "j", "k",
+                       "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
                        "area_ratio", "asymmetry", "murray_exponent", "angle_deg",
                        "angle_parent_first_deg", "angle_parent_second_deg",
                        "planarity_defect_deg", "angle_clean", "well_resolved")
 
 ELEMENT_COLUMNS = ("element_id", "order", "n_segments", "length_mm", "chord_mm", "tortuosity",
                    "calibre_mm", "mean_radius_mm", "proximal_calibre_mm", "distal_calibre_mm",
-                   "tip_radius_mm", "is_terminal")
+                   "tip_radius_mm", "is_terminal", "synthetic_fraction")
 
 RATIO_COLUMNS = ("ratio", "ordering", "counting", "value", "ci_low", "ci_high", "r2", "slope",
                  "n_orders", "order_min", "order_max", "prespecified")
+
+RECLAIM_COLUMNS = ("component_id", "repair", "length_mm", "median_radius_mm", "max_radius_mm",
+                   "gap_wall_mm", "path_mm", "reclaimed_ml",
+                   "i", "j", "k", "main_i", "main_j", "main_k")
 
 BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "length_mm",
                       "i", "j", "k", "x_mm", "y_mm", "z_mm")
@@ -1894,7 +1953,8 @@ def skeletonize_graph(work_mask, work_affine, work_spacing, verbose=True):
     return radius_map, skeleton, graph, positions, radii, voxel_size, world
 
 
-def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_factor):
+def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_factor,
+               synthetic=None):
     """
     Everything between the raw skeleton graph and the ordered branch table:
     pruning, component filtering, cycle breaking, ordering, smoothing.
@@ -1930,7 +1990,8 @@ def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_fac
     ordered = order_branches(graph, branches, positions, radii, root_voxel)
     smooth = smooth_centerline(ordered, world, voxel_size, args.smoothing, args.max_shift)
     table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size,
-                                        getattr(args, "angle_offset", DIRECTION_OFFSET)))
+                                        getattr(args, "angle_offset", DIRECTION_OFFSET),
+                                        synthetic))
     converged = diameter_defined_strahler(table)
 
     return {"graph": graph, "table": table, "smooth": smooth, "parts": parts,
@@ -1975,11 +2036,17 @@ def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_p
     mislabelled, it is a detour down the vein, and the "repair" would be
     inventing an anastomosis. Those are reported, not silently dropped.
 
-    Returns (repaired mask, one report row per severed fragment).
+    The reclaimed voxels are returned separately and never merged away: a
+    repaired mask that cannot say which of its voxels were invented is not a
+    measurement, it is an assertion. Everything downstream -- the painted
+    label, the per-branch synthetic fraction, the option to drop those
+    branches from the statistics -- reads that one array.
+
+    Returns (repaired mask, reclaimed voxels, one report row per fragment).
     """
     severed = [row for row in orphans if row["population"] == "severed"]
     if not severed:
-        return work_mask, []
+        return work_mask, np.zeros_like(work_mask), []
 
     union = work_mask | other
     inside = distance_transform_edt(union, sampling=spacing)
@@ -2029,7 +2096,7 @@ def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_p
         rows.append(dict(row, repair="reclaimed", path_mm=path_mm,
                          reclaimed_ml=float(gained.sum() * np.prod(spacing) / 1000.0)))
 
-    return work_mask | reclaimed, rows
+    return work_mask | reclaimed, reclaimed, rows
 
 
 def print_reclaim(rows, spacing, show=8):
@@ -2056,6 +2123,61 @@ def print_reclaim(rows, spacing, show=8):
     if refused:
         print("  a refused fragment is not a failure of the repair: it says the union route is a "
               "detour down the other tree, not a mislabelled crossing. Those stay orphans")
+
+
+def synthetic_share(table):
+    """
+    How much of the centerline runs through voxels a repair put back.
+
+    This is the number that decides whether the repaired tree can be quoted.
+    A few percent is a pedicle restored: the reattached fragment is real
+    vessel, measured on its own voxels, and only the crossing it hangs by is
+    reconstructed. A large share means the centerline is largely tracing the
+    reconstruction, and then the morphometry is describing the repair.
+    """
+    total = float(sum(entry["length_mm"] for entry in table))
+    made = float(sum(entry["length_mm"] * entry["synthetic_fraction"] for entry in table))
+    touched = [entry for entry in table if entry["synthetic_fraction"] > 0.0]
+    return {"total_mm": total, "synthetic_mm": made, "n_branches": len(touched),
+            "fraction": made / total if total > 0 else 0.0}
+
+
+def print_synthetic(share):
+    """Prints the synthetic share, and says what it licenses."""
+    print(f"\n=== synthetic centerline ===")
+    print(f"  {share['synthetic_mm']:.1f} mm of {share['total_mm']:.1f} mm "
+          f"({share['fraction']:.2%}) runs through voxels the repair put back, "
+          f"across {share['n_branches']} branch(es)")
+    print("  every branch carries synthetic_fraction in --branches-csv and --elements-csv, and "
+          "--max-synthetic drops them from the statistics while leaving the tree connected")
+    if share["fraction"] > 0.10:
+        print(f"  WARNING: over a tenth of the centerline is reconstructed. Re-run with "
+              f"--max-synthetic 0.5 and check the ratios hold: above this share they may be "
+              f"describing the repair rather than the tree")
+
+
+def compare_measurable(before, after):
+    """
+    How many junctions became measurable, before and after the repair.
+
+    A reconnected pedicle lengthens the segment it attaches to, and a segment
+    that was too short to clear the junction blob can cross that threshold
+    once it is whole again. So the repair is expected to buy back angles it
+    was never aimed at, and that recovery is worth reporting on its own: it
+    is the one effect of the reconnection that does not depend on any fitted
+    slope.
+    """
+    def count(bifurcations):
+        pairs = [b for b in bifurcations if b["angle_deg"] is not None]
+        return len([b for b in pairs if b["angle_clean"]]), len(pairs)
+
+    (clean_before, pairs_before), (clean_after, pairs_after) = count(before), count(after)
+    print("\n=== measurable bifurcations before / after reconnection ===")
+    print(f"  directions fitted clear of the blob: {clean_before}/{pairs_before} before, "
+          f"{clean_after}/{pairs_after} after ({clean_after - clean_before:+d})")
+    if clean_after > clean_before:
+        print("  the repair bought back angles it was not aimed at: reattached pedicles lengthen "
+              "the segments they join, and some now clear the direction-fit offset")
 
 
 def compare_ratios(before, after, ordering, counting):
@@ -2087,17 +2209,31 @@ def compare_ratios(before, after, ordering, counting):
               f"orders clear the diameter floor. Pin the range with --fit-orders to compare")
 
 
-def summarize(result, ordering, order_range, min_diameter, prespecified=False):
+def summarize(result, ordering, order_range, min_diameter, prespecified=False, max_synthetic=1.0):
     """
     Numbers the branches with the chosen ordering, then aggregates them both
     ways -- one row per order for segments, one for elements -- and fits the
     ratios on each.
+
+    `max_synthetic` drops the branches that owe more than that share of
+    their length to a repair, from the statistics only. The tree keeps them:
+    they are what makes the reattached fragment reachable at all, so
+    removing them from the graph would undo the ordering the repair was run
+    to obtain. What is at stake is narrower -- whether the ratios are being
+    carried by centerline through invented voxels -- and that is answered by
+    leaving the structure alone and taking the pedicles out of the averages.
     """
     table, smooth = result["table"], result["smooth"]
     for entry in table:
         entry["order"] = entry[ordering]
     elements = build_elements(table, ordering, smooth)
-    summaries = {"segment": order_summary(table, "order"), "element": order_summary(elements, "order")}
+    if max_synthetic < 1.0:
+        keep = [e for e in table if e["synthetic_fraction"] <= max_synthetic]
+        keep_elements = [e for e in elements if e["synthetic_fraction"] <= max_synthetic]
+    else:
+        keep, keep_elements = table, elements
+    summaries = {"segment": order_summary(keep, "order"),
+                 "element": order_summary(keep_elements, "order")}
     ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter, prespecified)
               for counting, rows in summaries.items()}
     return elements, summaries, ratios
@@ -2300,6 +2436,17 @@ def main():
                              "the other class")
     parser.add_argument("--repaired-mask", help="Where to write the mask --reconnect-severed "
                                                 "produced, on the working grid")
+    parser.add_argument("--max-synthetic", type=float, default=1.0, metavar="FRACTION",
+                        help="Drop from the per-order statistics every branch owing more than this "
+                             "share of its length to reclaimed voxels. The tree keeps them, so the "
+                             "ordering is unchanged; only the averages lose them. 1.0 keeps "
+                             "everything. Default: 1.0")
+    parser.add_argument("--branches-csv-repaired",
+                        help="Per-segment CSV of the tree AFTER --reconnect-severed, carrying "
+                             "synthetic_fraction so the reconstructed centerline can be found again")
+    parser.add_argument("--reconnect-csv", help="One row per severed fragment: whether it was "
+                                                "reclaimed or refused, the union path length, the "
+                                                "volume taken back and where to look")
     parser.add_argument("--reconnect-max-mm", type=float, default=20.0,
                         help="Longest union path that still counts as a mislabelled crossing. "
                              "Beyond it the route is a detour down the other tree and the fragment "
@@ -2432,7 +2579,8 @@ def main():
     elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
                                             args.fit_min_voxels * voxel_size, args.prespecified)
     summary = summaries[args.count]
-    bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size)
+    bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size,
+                                        positions, factors)
 
     lengths = np.array([b["length_mm"] for b in table])
     raw = sum(polyline_length(world[b["nodes"]]) for b in table)
@@ -2480,27 +2628,45 @@ def main():
         if compare_union is None:
             raise SystemExit("--reconnect-severed needs a second class to take the pedicles back "
                              "from: pass --compare-label or --compare-mask")
-        repaired, reclaimed = reclaim_pedicles(work_mask, other, orphans, positions, radii,
-                                               work_spacing, args.reconnect_max_mm)
+        repaired, added, reclaimed = reclaim_pedicles(work_mask, other, orphans, positions, radii,
+                                                      work_spacing, args.reconnect_max_mm)
         print_reclaim(reclaimed, work_spacing)
+        if args.reconnect_csv:
+            write_table_csv(args.reconnect_csv, reclaimed, RECLAIM_COLUMNS)
+            print(f"wrote {args.reconnect_csv}")
         if any(row["repair"] == "reclaimed" for row in reclaimed):
             print(f"repaired mask volume: {int(repaired.sum())} voxels "
                   f"({repaired.sum() * np.prod(work_spacing) / 1000.0:.2f} mL on the working grid, "
                   f"was {work_mask.sum() * np.prod(work_spacing) / 1000.0:.2f} mL)")
             fixed = skeletonize_graph(repaired, work_affine, work_spacing)
+            # which skeleton nodes of the repaired tree sit in reclaimed voxels
+            born = added[tuple(np.rint(fixed[3]).astype(int).T)]
             fixed_result = build_tree(fixed[2], fixed[3], fixed[4], fixed[6], fixed[5], args,
-                                      args.radius_factor)
+                                      args.radius_factor, born)
             if fixed_result is None:
                 print("  nothing survived pruning on the repaired mask, ratios unchanged")
             else:
-                _, _, fixed_ratios = summarize(fixed_result, args.ordering, args.fit_orders,
-                                               args.fit_min_voxels * voxel_size, args.prespecified)
+                fixed_elements, _, fixed_ratios = summarize(
+                    fixed_result, args.ordering, args.fit_orders,
+                    args.fit_min_voxels * voxel_size, args.prespecified, args.max_synthetic)
+                print_synthetic(synthetic_share(fixed_result["table"]))
+                fixed_bifurcations = analyze_bifurcations(
+                    fixed_result["table"], "order", args.murray_min_voxels * voxel_size,
+                    fixed[3], factors)
+                compare_measurable(bifurcations, fixed_bifurcations)
                 for counting in ("segment", "element"):
                     compare_ratios(ratios[counting], fixed_ratios[counting], args.ordering, counting)
+                if args.branches_csv_repaired:
+                    write_table_csv(args.branches_csv_repaired, fixed_result["table"], BRANCH_COLUMNS)
+                    print(f"wrote {args.branches_csv_repaired}")
                 if args.repaired_mask:
-                    nib.save(nib.Nifti1Image(repaired.astype(np.uint8), work_affine),
-                             args.repaired_mask)
-                    print(f"wrote {args.repaired_mask}")
+                    # label 1 is the original mask, label 2 the voxels taken
+                    # back: the file says on its own what in it was invented
+                    painted = repaired.astype(np.uint8)
+                    painted[added] = 2
+                    nib.save(nib.Nifti1Image(painted, work_affine), args.repaired_mask)
+                    print(f"wrote {args.repaired_mask} (label 1 = segmented, "
+                          f"label 2 = {int(added.sum())} reclaimed voxels)")
 
     bridge = None
     if args.bridge_sweep is not None:
