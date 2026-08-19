@@ -57,12 +57,19 @@ def run_case(rd, rl, spacing, args, workdir):
     expected the chain to reach and to skip cases too coarse to fit at all.
     """
     rng = np.random.default_rng(args.seed)
-    root_diameter = args.root_diameter
+    root_diameter, root_length = args.root_diameter, args.root_length
     if args.pin_smallest:
-        # hold the bottom of the tree at a fixed number of voxels so every
-        # phantom in the sweep offers the chain the same measurable span
+        # Hold the bottom of the tree at a fixed number of voxels so every
+        # phantom in the sweep offers the chain the same measurable span.
+        # The length has to be pinned with it: pinning the diameter alone
+        # scales the trunk as R_d^(orders-1) while its length stays put, and
+        # past R_d ~ 1.7 the trunk comes out wider than it is long. That is a
+        # disc, its daughters weld into it, and the fit that follows measures
+        # the weld. Both ends of every segment are pinned to the grid here,
+        # which is the only way the sweep varies the ratio and nothing else.
         root_diameter = args.pin_smallest * spacing * rd ** (args.orders - 1)
-    segments = phantom.build_tree(args.orders, root_diameter, args.root_length,
+        root_length = args.pin_length * spacing * rl ** (args.orders - 1)
+    segments = phantom.build_tree(args.orders, root_diameter, root_length,
                                   rd, rl, args.angle, args.jitter, rng)
     volume, origin = phantom.rasterize(segments, spacing, args.margin)
     mask = phantom.degrade(volume, spacing, phantom.default_blur(spacing, args.blur),
@@ -71,17 +78,27 @@ def run_case(rd, rl, spacing, args, workdir):
     if len(usable) < 3:
         return None, usable
 
-    mask_path = os.path.join(workdir, f"ph_{rd:.3f}_{spacing:.3f}.nii.gz")
-    ratios_path = os.path.join(workdir, f"ra_{rd:.3f}_{spacing:.3f}.csv")
+    # every varied parameter goes in the name. Keying on (R_d, spacing) alone
+    # collides across the two arms -- the R_l arm holds R_d fixed, so all of
+    # its cases share one file -- and nothing downstream catches a collision:
+    # it simply reads a neighbour's numbers as if they were this case's
+    stem = f"{rd:.3f}_{rl:.3f}_{spacing:.3f}"
+    mask_path = os.path.join(workdir, f"ph_{stem}.nii.gz")
+    ratios_path = os.path.join(workdir, f"ra_{stem}.csv")
+    # and a failed run must never be able to read the previous run's file
+    if os.path.exists(ratios_path):
+        os.remove(ratios_path)
     phantom.write_mask(mask, spacing, origin, mask_path)
 
     command = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "centerline.py"),
                "--input", mask_path, "--ordering", "strahler_dd", "--no-report",
                "--prespecified",
-               "--ratios-csv", ratios_path, "--output", os.path.join(workdir, "cl.nii.gz")]
+               "--ratios-csv", ratios_path,
+               "--output", os.path.join(workdir, f"cl_{stem}.nii.gz")]
     done = subprocess.run(command, capture_output=True, text=True)
     if done.returncode != 0 or not os.path.exists(ratios_path):
-        print(f"  centerline.py failed at R_d={rd}, spacing={spacing}:\n{done.stderr[-500:]}")
+        print(f"  centerline.py failed at R_d={rd}, R_l={rl}, spacing={spacing}:"
+              f"\n{done.stderr[-500:]}")
         return None, usable
 
     with open(ratios_path) as handle:
@@ -125,9 +142,12 @@ def main():
                         help="Imposed length ratios to sweep. This one has to be a sweep too: a "
                              "single value gives a degenerate curve that cannot be inverted")
     parser.add_argument("--rd-ref", type=float, default=None,
-                        help="R_d held fixed while R_l is swept. Default: the median of --rd")
+                        help="R_d held fixed while R_l is swept. Pick a value that makes a "
+                             "well-formed tree: the arm is measured on it. Default: 1.56")
     parser.add_argument("--rl-ref", type=float, default=None,
-                        help="R_l held fixed while R_d is swept. Default: the median of --rl")
+                        help="R_l held fixed while R_d is swept. A low value makes a stubby tree "
+                             "whose trunk is barely longer than it is wide, and the fit on it "
+                             "loses an order. Default: 1.49")
     parser.add_argument("--pin-smallest", type=float, default=None, metavar="VOXELS",
                         help="Scale the trunk so the SMALLEST order sits at this many voxels, "
                              "instead of fixing --root-diameter. Without it a larger imposed R_d "
@@ -135,6 +155,16 @@ def main():
                              "clear the resolution floor -- and the bias then varies with the "
                              "number of usable orders as much as with the ratio. Costs volume: "
                              "the trunk grows as R_d^(orders-1)")
+    parser.add_argument("--pin-length", type=float, default=None, metavar="VOXELS",
+                        help="Smallest segment LENGTH, in voxels, when --pin-smallest is used. "
+                             "Pinning the diameter alone lets the trunk outgrow its own length "
+                             "and turns it into a disc. Default: 4x --pin-smallest, which puts "
+                             "the tip at the length-to-diameter ratio of a real distal vessel")
+    parser.add_argument("--min-r2", type=float, default=0.90,
+                        help="A fit below this R2 is reported but kept out of the curve. A "
+                             "straight line through a phantom whose branches welded is not a "
+                             "measurement, and letting it into the inversion breaks the curve "
+                             "with a number that describes the weld. Default: 0.90")
     parser.add_argument("--spacing", type=float, nargs="+", default=[0.80, 1.05, 1.31],
                         help="Isotropic voxel sizes to sweep. Bracket the anisotropy of the study: "
                              "the in-plane size and the slice thickness")
@@ -163,6 +193,8 @@ def main():
     parser.add_argument("--keep", help="Directory to keep the phantoms and per-case CSVs in")
     args = parser.parse_args()
 
+    if args.pin_smallest and args.pin_length is None:
+        args.pin_length = 4.0 * args.pin_smallest
     workdir = args.keep or tempfile.mkdtemp(prefix="calibrate_")
     os.makedirs(workdir, exist_ok=True)
     print(f"working in {workdir}")
@@ -175,8 +207,16 @@ def main():
     # R_d is swept at a fixed R_l, R_l at a fixed R_d, and each ratio is
     # inverted on its own arm only. The cross product would answer both at
     # once and costs the product of the two sweeps; two arms cost the sum.
-    rd_ref = args.rd_ref if args.rd_ref is not None else sorted(args.rd)[len(args.rd) // 2]
-    rl_ref = args.rl_ref if args.rl_ref is not None else sorted(args.rl)[len(args.rl) // 2]
+    # The held-fixed value is not a detail of bookkeeping: each arm measures
+    # its ratio ON a tree whose other ratio is that value, so a poor choice
+    # calibrates the degeneracy instead of the ratio. Taking the median of
+    # whatever list was swept is the wrong default -- sweeping R_l down to
+    # 1.15 drags the held R_l to 1.30, whose trunk is only twice as long as
+    # it is wide, and the fit on those trees loses an order and swings by
+    # ten percent. Both defaults are therefore anatomical reference values,
+    # independent of what is being swept.
+    rd_ref = args.rd_ref if args.rd_ref is not None else 1.56
+    rl_ref = args.rl_ref if args.rl_ref is not None else 1.49
     plan = ([("R_d", rd, rl_ref) for rd in args.rd] +
             [("R_l", rd_ref, rl) for rl in args.rl])
     print(f"  R_d arm: {len(args.rd)} value(s) at R_l = {rl_ref}")
@@ -203,6 +243,12 @@ def main():
                     "order_max": int(row["order_max"]) if row and row["order_max"] else None,
                     "n_orders": int(row["n_orders"]) if row and row["n_orders"] else 0,
                     "orders_expected": len(usable),
+                    # a case is only comparable to its neighbours if the chain
+                    # reached the same orders it reached for them. Losing one
+                    # is not a small loss of power: on a five-point fit it is
+                    # the single thing that predicts a bad recovery here
+                    "reliable": bool(row and row["r2"] and float(row["r2"]) >= args.min_r2
+                                     and int(row["n_orders"]) >= len(usable)),
                 })
             print(f"  spacing {spacing:.2f} mm, {arm} arm, R_d {rd:.2f} R_l {rl:.2f}: "
                   f"orders {usable} -> {arm}={results[-1]['recovered']}")
@@ -215,18 +261,26 @@ def main():
                 print(f"  {row['spacing_mm']:7.2f} {row['imposed']:9.3f}   not measurable "
                       f"({row['orders_expected']} order(s) expected to resolve)")
                 continue
+            if row["reliable"]:
+                flag = ""
+            elif row["r2"] < args.min_r2:
+                flag = f"   <- R2 under {args.min_r2}, kept out of the curve"
+            else:
+                flag = (f"   <- fitted {row['n_orders']} of {row['orders_expected']} orders, "
+                        f"kept out of the curve")
             print(f"  {row['spacing_mm']:7.2f} {row['imposed']:9.3f} {row['recovered']:11.3f} "
                   f"{row['bias']:+15.1%}   [{row['bias_low']:+6.1%}, {row['bias_high']:+6.1%}] "
-                  f"{row['r2']:7.3f}   {row['order_min']}..{row['order_max']}")
+                  f"{row['r2']:7.3f}   {row['order_min']}..{row['order_max']}{flag}")
         for spacing in args.spacing:
-            counts = {r["n_orders"] for r in results
-                      if r["ratio"] == name and r["spacing_mm"] == spacing and r["recovered"]}
+            here = [r for r in results if r["ratio"] == name and r["spacing_mm"] == spacing]
+            kept = [r for r in here if r["reliable"]]
+            counts = {r["n_orders"] for r in kept}
+            print(f"  at {spacing:.2f} mm: {len(kept)}/{len(here)} case(s) kept, all on "
+                  f"{sorted(counts) if counts else 'no'} order(s)")
             if len(counts) > 1:
-                print(f"  WARNING at {spacing:.2f} mm: the fit rests on {sorted(counts)} orders "
-                      f"across this sweep, not the same number every time. Part of what the bias "
-                      f"column shows is that changing count, not the ratio -- a larger imposed "
-                      f"ratio pushes more orders under the resolution floor. Re-run with "
-                      f"--pin-smallest 3 to hold the measurable span fixed and separate the two")
+                print(f"  WARNING: the kept cases still do not rest on the same number of orders. "
+                      f"Part of what the bias column shows is that changing count rather than the "
+                      f"ratio, and the curve is not comparable point to point")
 
     measured = {"R_d": args.measured_rd, "R_l": args.measured_rl}
     for name in RATIOS:
@@ -235,7 +289,7 @@ def main():
         print(f"\n=== {name}: reading the curve backwards ===")
         for spacing in args.spacing:
             curve = [(r["imposed"], r["recovered"]) for r in results
-                     if r["ratio"] == name and r["spacing_mm"] == spacing]
+                     if r["ratio"] == name and r["spacing_mm"] == spacing and r["reliable"]]
             for value in measured[name]:
                 back = invert(curve, value)
                 if back == "not monotonic":
@@ -257,7 +311,7 @@ def main():
     if args.out:
         columns = ("ratio", "spacing_mm", "imposed", "held_rd", "held_rl", "recovered",
                    "ci_low", "ci_high", "r2", "bias", "bias_low", "bias_high",
-                   "order_min", "order_max", "n_orders", "orders_expected")
+                   "order_min", "order_max", "n_orders", "orders_expected", "reliable")
         with open(args.out, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
             writer.writeheader()
