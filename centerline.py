@@ -2204,9 +2204,18 @@ def sweep_detour(orphans, work_mask, other, spacing, thresholds, dust_length,
     trade is not obvious either: a fragment reached by a long way round is
     reattached by a long tube, so the volume taken from the other class and
     the length of fabricated centerline both grow faster than the orphan
-    length recovered. `mL per mm` is the column that says so -- it is flat
-    while the paths are crossings and climbs once they are detours, and the
-    threshold to keep is the last one before it climbs.
+    length recovered.
+
+    The cost is reported per step, not cumulatively. A running average over
+    everything admitted so far is dominated by the fragments already in it,
+    so an expensive step barely moves it and the column reads flat whatever
+    happens -- the marginal figure answers "what did this step cost", which
+    is the question the threshold actually asks.
+
+    Even so the column decides nothing on its own. It is volume per
+    millimetre of orphan recovered, so a long fragment reached by a long thin
+    tube is cheap by it while still being a detour. Read it against `detour`,
+    never instead of it.
 
     Each fragment's tube is painted once; the thresholds only change which
     ones are summed, so the whole table costs one pass over the candidates.
@@ -2225,14 +2234,18 @@ def sweep_detour(orphans, work_mask, other, spacing, thresholds, dust_length,
 
     missing = sum(row["length_mm"] for row in orphans)
     rows = []
-    for threshold in thresholds:
+    previous = (0, 0.0, 0.0)
+    for threshold in sorted(thresholds):
         kept = [entry for entry in priced if entry[0] <= threshold]
         length = sum(entry[1] for entry in kept)
         volume = sum(entry[2] for entry in kept)
+        added = length - previous[1]
         rows.append({"detour": float(threshold), "n": len(kept), "length_mm": length,
                      "reclaimed_ml": volume,
                      "share": length / missing if missing > 0 else 0.0,
-                     "ml_per_mm": volume / length if length > 0 else float("nan")})
+                     "n_added": len(kept) - previous[0], "added_mm": added,
+                     "step_ml_per_mm": (volume - previous[2]) / added if added > 0 else float("nan")})
+        previous = (len(kept), length, volume)
     return rows
 
 
@@ -2249,27 +2262,32 @@ def print_detour_sweep(rows, missing):
     print("\n=== severed fragments vs the detour threshold ===")
     print(f"  shares are of the {missing:.0f} mm of centerline outside the main tree, the same "
           f"denominator as the orphan report")
-    print("  detour   n   recovered_mm   share_of_missing   reclaimed_mL   mL per mm")
-    previous = None
+    print("  detour   n   recovered_mm   share_of_missing   reclaimed_mL |  +frags    +mm   "
+          "mL/mm of the step")
     for row in rows:
-        same = "  (no fragment in this step)" if previous is not None and row["n"] == previous else ""
+        step = ("       -      -                  -   (nothing new)" if row["n_added"] == 0 else
+                f"  {row['n_added']:6d} {row['added_mm']:6.1f} {row['step_ml_per_mm']:18.4f}")
         print(f"  {row['detour']:6.2f} {row['n']:3d} {row['length_mm']:14.1f} "
-              f"{row['share']:18.1%} {row['reclaimed_ml']:14.2f} {row['ml_per_mm']:11.4f}{same}")
-        previous = row["n"]
-    usable = [row for row in rows if row["n"] > 0]
-    counts = {row["n"] for row in rows}
-    if len(counts) <= 1:
-        print("  the threshold does nothing over this range: no fragment's detour falls in it. "
-              "Widen the range before reading anything into the cost column")
+              f"{row['share']:18.1%} {row['reclaimed_ml']:14.2f} |{step}")
+
+    steps = [row for row in rows if row["n_added"] > 0]
+    if len(steps) < 2:
+        print("  the threshold admits fragments in at most one step over this range: it is not "
+              "being tested. Widen the range before reading anything into the cost column")
         return
-    if len(usable) >= 2:
-        best = min(usable, key=lambda row: row["ml_per_mm"])
-        print(f"  cheapest reconnection per millimetre at detour {best['detour']:.2f} "
-              f"({best['ml_per_mm']:.4f} mL/mm, {best['n']} fragment(s), "
-              f"{best['share']:.1%} of the missing length)")
-        print("  a rising mL/mm means the extra fragments are being reached by long tortuous "
-              "tubes, not by crossings: past that point the repair is fabricating more geometry "
-              "than it recovers. Read it off a row that actually admitted a fragment")
+    costs = [row["step_ml_per_mm"] for row in steps]
+    if max(costs) < 2.0 * min(costs):
+        print(f"  the marginal cost stays within a factor two across every step "
+              f"({min(costs):.4f} to {max(costs):.4f} mL/mm), so it separates nothing here: "
+              f"fragments admitted late cost about what the early ones cost. The threshold then "
+              f"has to be argued from the detour distribution itself, not from this column")
+    else:
+        peak = max(steps, key=lambda row: row["step_ml_per_mm"])
+        print(f"  the marginal cost peaks at detour {peak['detour']:.2f} "
+              f"({peak['step_ml_per_mm']:.4f} mL/mm for {peak['added_mm']:.1f} mm)")
+    print("  volume per millimetre of orphan recovered: a long fragment reached by a long thin "
+          "tube is cheap by this measure and still a detour. It qualifies the detour criterion, "
+          "it does not replace it")
 
 
 def print_reclaim(rows, orphans, spacing, show=8):

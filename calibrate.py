@@ -57,7 +57,12 @@ def run_case(rd, rl, spacing, args, workdir):
     expected the chain to reach and to skip cases too coarse to fit at all.
     """
     rng = np.random.default_rng(args.seed)
-    segments = phantom.build_tree(args.orders, args.root_diameter, args.root_length,
+    root_diameter = args.root_diameter
+    if args.pin_smallest:
+        # hold the bottom of the tree at a fixed number of voxels so every
+        # phantom in the sweep offers the chain the same measurable span
+        root_diameter = args.pin_smallest * spacing * rd ** (args.orders - 1)
+    segments = phantom.build_tree(args.orders, root_diameter, args.root_length,
                                   rd, rl, args.angle, args.jitter, rng)
     volume, origin = phantom.rasterize(segments, spacing, args.margin)
     mask = phantom.degrade(volume, spacing, phantom.default_blur(spacing, args.blur),
@@ -116,7 +121,20 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--rd", type=float, nargs="+", default=[1.30, 1.45, 1.56, 1.70, 1.85],
                         help="Imposed diameter ratios to sweep")
-    parser.add_argument("--rl", type=float, default=1.49, help="Imposed length ratio. Default: 1.49")
+    parser.add_argument("--rl", type=float, nargs="+", default=[1.15, 1.30, 1.49, 1.65, 1.80],
+                        help="Imposed length ratios to sweep. This one has to be a sweep too: a "
+                             "single value gives a degenerate curve that cannot be inverted")
+    parser.add_argument("--rd-ref", type=float, default=None,
+                        help="R_d held fixed while R_l is swept. Default: the median of --rd")
+    parser.add_argument("--rl-ref", type=float, default=None,
+                        help="R_l held fixed while R_d is swept. Default: the median of --rl")
+    parser.add_argument("--pin-smallest", type=float, default=None, metavar="VOXELS",
+                        help="Scale the trunk so the SMALLEST order sits at this many voxels, "
+                             "instead of fixing --root-diameter. Without it a larger imposed R_d "
+                             "spans a wider diameter range over the same orders, so fewer of them "
+                             "clear the resolution floor -- and the bias then varies with the "
+                             "number of usable orders as much as with the ratio. Costs volume: "
+                             "the trunk grows as R_d^(orders-1)")
     parser.add_argument("--spacing", type=float, nargs="+", default=[0.80, 1.05, 1.31],
                         help="Isotropic voxel sizes to sweep. Bracket the anisotropy of the study: "
                              "the in-plane size and the slice thickness")
@@ -151,17 +169,30 @@ def main():
     print(f"{len(args.rd)} imposed R_d x {len(args.spacing)} spacings = "
           f"{len(args.rd) * len(args.spacing)} chain runs, jitter {args.jitter}")
 
+    # One arm per ratio. A curve can only be read backwards along the axis
+    # that was actually varied: sweeping R_d while R_l stays at one value
+    # gives an R_l "curve" whose x is constant, which inverts to nothing. So
+    # R_d is swept at a fixed R_l, R_l at a fixed R_d, and each ratio is
+    # inverted on its own arm only. The cross product would answer both at
+    # once and costs the product of the two sweeps; two arms cost the sum.
+    rd_ref = args.rd_ref if args.rd_ref is not None else sorted(args.rd)[len(args.rd) // 2]
+    rl_ref = args.rl_ref if args.rl_ref is not None else sorted(args.rl)[len(args.rl) // 2]
+    plan = ([("R_d", rd, rl_ref) for rd in args.rd] +
+            [("R_l", rd_ref, rl) for rl in args.rl])
+    print(f"  R_d arm: {len(args.rd)} value(s) at R_l = {rl_ref}")
+    print(f"  R_l arm: {len(args.rl)} value(s) at R_d = {rd_ref}")
+
     results = []
     for spacing in args.spacing:
-        for rd in args.rd:
-            fits, usable = run_case(rd, args.rl, spacing, args, workdir)
-            truth = {"R_d": rd, "R_l": args.rl}
-            for name in RATIOS:
+        for arm, rd, rl in plan:
+            fits, usable = run_case(rd, rl, spacing, args, workdir)
+            truth = {"R_d": rd, "R_l": rl}
+            for name in [arm]:
                 row = fits.get(name) if fits else None
                 value = float(row["value"]) if row and row["value"] else None
                 results.append({
                     "ratio": name, "spacing_mm": spacing, "imposed": truth[name],
-                    "recovered": value,
+                    "held_rd": rd, "held_rl": rl, "recovered": value,
                     "ci_low": float(row["ci_low"]) if row and row["ci_low"] else None,
                     "ci_high": float(row["ci_high"]) if row and row["ci_high"] else None,
                     "r2": float(row["r2"]) if row and row["r2"] else None,
@@ -173,8 +204,8 @@ def main():
                     "n_orders": int(row["n_orders"]) if row and row["n_orders"] else 0,
                     "orders_expected": len(usable),
                 })
-            print(f"  spacing {spacing:.2f} mm, R_d {rd:.2f}: orders {usable} -> " +
-                  ", ".join(f"{n}={results[-len(RATIOS) + i]['recovered']}" for i, n in enumerate(RATIOS)))
+            print(f"  spacing {spacing:.2f} mm, {arm} arm, R_d {rd:.2f} R_l {rl:.2f}: "
+                  f"orders {usable} -> {arm}={results[-1]['recovered']}")
 
     for name in RATIOS:
         print(f"\n=== {name}: imposed vs recovered ===")
@@ -187,6 +218,15 @@ def main():
             print(f"  {row['spacing_mm']:7.2f} {row['imposed']:9.3f} {row['recovered']:11.3f} "
                   f"{row['bias']:+15.1%}   [{row['bias_low']:+6.1%}, {row['bias_high']:+6.1%}] "
                   f"{row['r2']:7.3f}   {row['order_min']}..{row['order_max']}")
+        for spacing in args.spacing:
+            counts = {r["n_orders"] for r in results
+                      if r["ratio"] == name and r["spacing_mm"] == spacing and r["recovered"]}
+            if len(counts) > 1:
+                print(f"  WARNING at {spacing:.2f} mm: the fit rests on {sorted(counts)} orders "
+                      f"across this sweep, not the same number every time. Part of what the bias "
+                      f"column shows is that changing count, not the ratio -- a larger imposed "
+                      f"ratio pushes more orders under the resolution floor. Re-run with "
+                      f"--pin-smallest 3 to hold the measurable span fixed and separate the two")
 
     measured = {"R_d": args.measured_rd, "R_l": args.measured_rl}
     for name in RATIOS:
@@ -215,9 +255,9 @@ def main():
               "size and its slice thickness rather than at either")
 
     if args.out:
-        columns = ("ratio", "spacing_mm", "imposed", "recovered", "ci_low", "ci_high", "r2",
-                   "bias", "bias_low", "bias_high", "order_min", "order_max", "n_orders",
-                   "orders_expected")
+        columns = ("ratio", "spacing_mm", "imposed", "held_rd", "held_rl", "recovered",
+                   "ci_low", "ci_high", "r2", "bias", "bias_low", "bias_high",
+                   "order_min", "order_max", "n_orders", "orders_expected")
         with open(args.out, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
             writer.writeheader()
