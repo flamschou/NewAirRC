@@ -2534,8 +2534,24 @@ def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors
     return rows
 
 
+SWEEP_MIN_R2 = 0.90
+
+
 def print_sweep(rows, ordering, counting):
-    """Prints the ratios against the pruning strength, and their spread."""
+    """
+    Prints the ratios against the pruning strength, and their spread.
+
+    The spread is computed only over the rows whose fit rests on the same
+    orders. A row that gained or lost an order is not a different pruning of
+    the same measurement, it is a different measurement: the fit range moved
+    under it, and its ratio differs for that reason before any effect of the
+    pruning. Pooling it into the range attributes to k something k did not do.
+
+    And a ratio is only called pruning-driven when its fits are worth
+    interpreting. A column of R2 near zero scatters as much as one likes
+    without saying anything about the pruning -- the scatter is the fit
+    failing, not k acting -- so it is reported as an unusable fit instead.
+    """
     print(f"\n=== pruning sensitivity ({ordering}, {counting}s) ===")
     print("    k  branches  elements  leaves   orders    R_b    R2     R_d    R2     R_l    R2")
     for row in rows:
@@ -2550,14 +2566,31 @@ def print_sweep(rows, ordering, counting):
     if len({row["n_branches"] for row in rows}) < max(2, len(rows) // 2):
         print("  note: most of the sweep gave the same tree -- the absolute floor "
               "--min-branch-length is what is pruning, not k. Set it to 0 to sweep k alone")
-    for name in ("R_b", "R_d", "R_l"):
-        values = np.array([row[name] for row in rows if row[name] is not None], float)
+    spans = [(row["order_min"], row["order_max"]) for row in rows if row["order_min"] is not None]
+    modal = max(set(spans), key=spans.count) if spans else None
+    comparable = [row for row in rows if (row["order_min"], row["order_max"]) == modal]
+    dropped = [row for row in rows if row not in comparable and row["order_min"] is not None]
+    if dropped:
+        print(f"  the spread below is over the {len(comparable)} row(s) fitted on orders "
+              f"{modal[0]}..{modal[1]}; k=" +
+              ", ".join(f"{row['radius_factor']:.2f}" for row in dropped) +
+              " left out, their fit rests on a different order range and their ratios differ for "
+              "that reason before any effect of the pruning")
+
+    for name, r2_key in (("R_b", "r2_b"), ("R_d", "r2_d"), ("R_l", "r2_l")):
+        usable = [row for row in comparable if row[name] is not None]
+        values = np.array([row[name] for row in usable], float)
         if values.size < 2:
             continue
-        spread = float(values.max() - values.min())
-        print(f"  {name}: {values.min():.3f}..{values.max():.3f} over the sweep "
-              f"({spread / values.mean():.1%} of its mean)"
-              + ("   <- driven by the pruning, not by the tree" if spread / values.mean() > 0.10 else ""))
+        spread = float(values.max() - values.min()) / float(values.mean())
+        best = max((row[r2_key] or 0.0) for row in usable)
+        line = f"  {name}: {values.min():.3f}..{values.max():.3f} over the sweep ({spread:.1%} of its mean)"
+        if best < SWEEP_MIN_R2:
+            line += (f"   <- but no fit here clears R2 {SWEEP_MIN_R2:.2f} (best {best:.3f}): "
+                     f"that scatter is the fit failing, not the pruning acting")
+        elif spread > 0.10:
+            line += "   <- driven by the pruning, not by the tree"
+        print(line)
 
 
 SWEEP_COLUMNS = ("radius_factor", "n_branches", "n_elements", "n_leaves",
