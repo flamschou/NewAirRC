@@ -1374,7 +1374,7 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
             "union_reconnects": reconnects,
             # working-grid skeleton nodes of the narrowest crossing, kept for
             # the repair; not CSV columns
-            "orphan_node": orphan_node, "main_node": main_node,
+            "orphan_node": orphan_node, "main_node": main_node, "nodes": nodes,
             "component_id": index,
             "length_mm": float(length),
             "n_points": int(len(nodes)),
@@ -1413,21 +1413,37 @@ POPULATION_NOTES = {
 }
 
 
-def classify_orphans(orphans, dust_length):
+def classify_orphans(orphans, dust_length, max_detour=3.0, max_calibre_ratio=2.0,
+                     max_elbow_deg=60.0):
     """
     Sorts the orphan components into the three populations, in priority order.
 
     Size comes first: a two-millimetre speck that happens to touch the other
     class is speckle, not a severed pedicle, and letting it into that group
     would inflate exactly the number the repair is judged on.
+
+    Severed then demands more than reachability. Reachability through the
+    union is nearly free -- the other tree is connected, so almost any
+    fragment touching it has some path to the trunk -- and a partition built
+    on it alone reads as though most of the missing vessel were a
+    classification error recoverable in post-processing. Requiring the path
+    to be short, calibre-compatible and in line with the fragment moves the
+    ones that only had a long way round into `hole`, where they say what they
+    actually are: vessel absent from both classes, which is sensitivity, and
+    which no post-processing recovers.
+
+    `severed_reject` keeps the reason for each demotion.
     """
     for row in orphans:
+        row["severed_reject"] = ""
         if row["length_mm"] < dust_length:
             row["population"] = "dust"
         elif row.get("union_reconnects") is None:
             row["population"] = "detached"
         elif row["union_reconnects"]:
-            row["population"] = "severed"
+            reject = severed_verdict(row, max_detour, max_calibre_ratio, max_elbow_deg)
+            row["severed_reject"] = reject or ""
+            row["population"] = "hole" if reject else "severed"
         else:
             row["population"] = "hole"
     return orphans
@@ -1493,7 +1509,20 @@ def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8
             print(f"      {wrapped}")
     if compare_name:
         print(f"  severed / hole was decided by labelling the union with {compare_name}, "
-              f"which needs no threshold")
+              f"then requiring the union path to be a crossing rather than a way round")
+        demoted = [row for row in orphans if row.get("severed_reject")]
+        if demoted:
+            length = sum(row["length_mm"] for row in demoted)
+            print(f"  {len(demoted)} fragment(s), {length:.0f} mm, reach the trunk through the "
+                  f"union but not by a credible pedicle, and are counted as holes:")
+            for row in sorted(demoted, key=lambda r: -r["length_mm"])[:show]:
+                print(f"    fragment {row['component_id']:3d} ({row['length_mm']:6.1f} mm): "
+                      f"{row['severed_reject']}")
+            if len(demoted) > show:
+                print(f"    ... {len(demoted) - show} more, see severed_reject in --orphans-csv")
+            print(f"  a demotion moves the correction from post-processing to retraining, so the "
+                  f"three thresholds behind it are --severed-max-detour, --severed-max-calibre "
+                  f"and --severed-max-elbow")
     print(f"  the split at {dust_length:.0f} mm is --dust-length; above it, the components are "
           f"the ones worth repairing")
 
@@ -1866,7 +1895,8 @@ RATIO_COLUMNS = ("ratio", "ordering", "counting", "value", "ci_low", "ci_high", 
                  "n_orders", "order_min", "order_max", "prespecified")
 
 RECLAIM_COLUMNS = ("component_id", "repair", "length_mm", "median_radius_mm", "max_radius_mm",
-                   "gap_wall_mm", "path_mm", "reclaimed_ml",
+                   "gap_wall_mm", "gap_axis_mm", "path_mm", "detour", "path_calibre_mm",
+                   "elbow_deg", "reclaimed_ml",
                    "i", "j", "k", "main_i", "main_j", "main_k")
 
 BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "length_mm",
@@ -1875,6 +1905,7 @@ BREAKPOINT_COLUMNS = ("branch_id", "generation", "strahler", "tip_radius_mm", "l
 ORPHAN_COLUMNS = ("component_id", "length_mm", "n_points", "median_radius_mm", "max_radius_mm",
                   "gap_axis_mm", "gap_wall_mm", "bridgeable",
                   "population", "compare_gap_mm", "compare_overlap", "nearer", "union_reconnects",
+                  "path_mm", "detour", "path_calibre_mm", "elbow_deg", "severed_reject",
                   "i", "j", "k", "main_i", "main_j", "main_k")
 
 QUALITY_COLUMNS = ("ordering", "mask_volume_ml", "n_segments", "n_elements", "n_leaves",
@@ -1999,42 +2030,125 @@ def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_fac
             "cycles": int(cycles), "dd_converged": converged}
 
 
-def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_path_mm):
+def union_paths(work_mask, other, orphans, positions, radii, spacing):
+    """
+    Measures the route through the other class that makes each candidate
+    fragment reachable, and whether that route is a crossing or a detour.
+
+    `union_reconnects` on its own is far too generous a test. It asks only
+    whether a path exists, and the venous tree is one connected object: once
+    a fragment touches it anywhere, a path to the trunk almost always exists,
+    running centimetres down the vein and back up. That path is not a severed
+    pedicle. Calling it one turns the whole missing-vessel budget into a
+    post-processing problem when it is a sensitivity problem.
+
+    So the path is measured, not just found, on three counts:
+
+    - `detour`, the path length over the straight axis-to-axis gap. A real
+      crossing gives a path barely longer than the direct distance; a run
+      down the vein gives a multiple of it. This is the discriminating one.
+    - `path_calibre_mm`, the median half-width of the union along the stretch
+      actually traversed in the other class. A pedicle taken by the classifier
+      is the width of the artery it belongs to. Three times that width is a
+      vein being walked down, not an artery being crossed.
+    - `elbow_deg`, the angle between the fragment's own axis at the cut and
+      the direction to where the path attaches. A vessel continues into its
+      pedicle; a detour leaves at an angle.
+
+    One Dijkstra serves both the classification and the repair, and the path
+    is kept on the row so `reclaim_pedicles` never recomputes it.
+    """
+    candidates = [row for row in orphans if row.get("union_reconnects")]
+    for row in orphans:
+        row.setdefault("path_mm", None)
+        row.setdefault("detour", None)
+        row.setdefault("path_calibre_mm", None)
+        row.setdefault("elbow_deg", None)
+        row["path"] = None
+    if not candidates:
+        return
+
+    union = work_mask | other
+    inside = distance_transform_edt(union, sampling=spacing)
+    caps = {row["component_id"]: float(min(radii[row["orphan_node"]], radii[row["main_node"]]))
+            for row in candidates}
+    # the cost is 1/EDT, clipped at the calibre being rejoined: unclipped, a
+    # wide vessel is arbitrarily cheap and the cheapest route from a fragment
+    # millimetres away runs down the nearest trunk and back
+    costs = np.where(union, 1.0 / np.clip(inside, 1e-6, max(caps.values())), np.inf)
+
+    # the trunk is the mask component the main tree sits in, not the tree
+    # itself: the path has to be allowed to leave the trunk anywhere
+    labels = connected_components(work_mask, structure=np.ones((3, 3, 3), dtype=int))[0]
+    trunk_voxel = tuple(np.rint(positions[candidates[0]["main_node"]]).astype(int))
+    starts = np.argwhere(labels == labels[trunk_voxel])
+
+    mcp = MCP_Geometric(costs, sampling=tuple(float(s) for s in spacing), fully_connected=True)
+    mcp.find_costs(starts.tolist())
+
+    taken = other & ~work_mask
+    for row in candidates:
+        anchor = tuple(np.rint(positions[row["orphan_node"]]).astype(int))
+        try:
+            path = np.asarray(mcp.traceback(anchor))
+        except ValueError:
+            path = None
+        if path is None or len(path) < 2:
+            continue
+
+        row["path"] = path
+        row["path_mm"] = float(np.linalg.norm(np.diff(path, axis=0) * spacing, axis=1).sum())
+        gap = row["gap_axis_mm"]
+        row["detour"] = row["path_mm"] / gap if gap > 0 else float("inf")
+
+        crossed = taken[tuple(path.T)]
+        row["path_calibre_mm"] = float(np.median(inside[tuple(path[crossed].T)])) if crossed.any() else 0.0
+
+        # the fragment's own axis where it was cut, against the direction to
+        # the point the path attaches on the trunk
+        cap = caps[row["component_id"]]
+        points = positions[row["nodes"]] * spacing
+        origin = positions[row["orphan_node"]] * spacing
+        near = points[np.linalg.norm(points - origin, axis=1) <= max(3.0 * cap, 5.0 * min(spacing))]
+        toward = (path[0] - path[-1]) * spacing
+        if len(near) >= 3 and np.linalg.norm(toward) > 0:
+            axis = np.linalg.svd(near - near.mean(axis=0), full_matrices=False)[2][0]
+            # the axis has no sign, so the acute angle is the whole claim
+            row["elbow_deg"] = min(vector_angle(axis, toward), 180.0 - vector_angle(axis, toward))
+
+
+def severed_verdict(row, max_detour, max_calibre_ratio, max_elbow_deg):
+    """
+    Whether a union path is a mislabelled crossing or a detour, and why not.
+
+    Returns None when the fragment passes, otherwise the short reason it
+    failed. The reason is kept and reported: a fragment demoted from severed
+    to hole is a change of diagnosis -- post-processing to retraining -- and
+    it has to be auditable rather than a count that moved.
+    """
+    if row.get("path") is None:
+        return "no union path"
+    if row["detour"] > max_detour:
+        return f"detour x{row['detour']:.1f}"
+    cap = row["median_radius_mm"]
+    if cap > 0 and row["path_calibre_mm"] > max_calibre_ratio * cap:
+        return f"crosses r={row['path_calibre_mm']:.1f} mm"
+    if row["elbow_deg"] is not None and row["elbow_deg"] > max_elbow_deg:
+        return f"elbow {row['elbow_deg']:.0f} deg"
+    return None
+
+
+def reclaim_pedicles(work_mask, other, orphans, spacing):
     """
     Puts back the vessel that the A/V classifier gave to the other class.
 
-    A severed fragment is one that is disconnected from the trunk in its own
-    class but connected to it in the union: the few millimetres joining them
-    exist in the image and were segmented, they were just labelled venous.
-    Nothing has to be invented to reattach it -- the voxels are already
-    there, in `other`, and the repair is to take them back.
-
-    The path is the minimum-cost route through the union from the trunk to
-    the fragment, with cost 1/EDT, i.e. cheap down the middle of a vessel and
-    expensive against a wall. That is the standard minimal-path vessel cost,
-    and it matters here: a purely geometric shortest path would cut the
-    corner and hug the union's surface, and the skeleton of the result would
-    then run along the wall instead of the axis.
-
-    The EDT is clipped at the calibre of the vessels being rejoined before it
-    is inverted, and without that clip the cost is not usable for this job.
-    Unclipped, a wide vessel is arbitrarily cheap to travel, so the cheapest
-    route from a fragment four millimetres away runs tens of millimetres down
-    the nearest trunk and back -- the cost was designed to trace a centerline
-    along a vessel, not to cross between two. Clipped, extra width past the
-    calibre buys no further discount, staying off the wall still does, and
-    length is decisive again beyond that scale.
-
-    Around that path a tube is opened, no wider than the narrower of the two
-    vessel ends being joined and always clipped to the union. Both caps are
-    what keeps the repair from swallowing the vein it crosses: the reclaimed
-    pedicle can be no wider than the artery it restores, and can contain no
-    voxel that was not already segmented as vessel.
-
-    A path longer than `max_path_mm` is refused rather than reclaimed. Beyond
-    a couple of centimetres the route is no longer a crossing that was
-    mislabelled, it is a detour down the vein, and the "repair" would be
-    inventing an anastomosis. Those are reported, not silently dropped.
+    Only the fragments that `severed_verdict` cleared get here, so the path
+    is known to be a short, calibre-compatible, in-line crossing. Around it a
+    tube is opened, no wider than the narrower of the two vessel ends being
+    joined and always clipped to the union. Both caps are what keeps the
+    repair from swallowing the vein it crosses: the reclaimed pedicle can be
+    no wider than the artery it restores, and can contain no voxel that was
+    not already segmented as vessel.
 
     The reclaimed voxels are returned separately and never merged away: a
     repaired mask that cannot say which of its voxels were invented is not a
@@ -2049,40 +2163,11 @@ def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_p
         return work_mask, np.zeros_like(work_mask), []
 
     union = work_mask | other
-    inside = distance_transform_edt(union, sampling=spacing)
-    caps = {row["component_id"]: float(min(radii[row["orphan_node"]], radii[row["main_node"]]))
-            for row in severed}
-    clip = max(caps.values())
-    costs = np.where(union, 1.0 / np.clip(inside, 1e-6, clip), np.inf)
-
-    # the trunk is the mask component the main tree sits in, not the tree
-    # itself: the path has to be allowed to leave the trunk anywhere
-    labels = connected_components(work_mask, structure=np.ones((3, 3, 3), dtype=int))[0]
-    trunk_voxel = tuple(np.rint(positions[severed[0]["main_node"]]).astype(int))
-    starts = np.argwhere(labels == labels[trunk_voxel])
-
-    mcp = MCP_Geometric(costs, sampling=tuple(float(s) for s in spacing), fully_connected=True)
-    mcp.find_costs(starts.tolist())
-
     reclaimed = np.zeros_like(work_mask)
     rows = []
     for row in severed:
-        end = tuple(np.rint(positions[row["orphan_node"]]).astype(int))
-        try:
-            path = np.asarray(mcp.traceback(end))
-        except ValueError:
-            path = None
-        if path is None or len(path) < 2:
-            rows.append(dict(row, repair="unreachable", path_mm=None, reclaimed_ml=0.0))
-            continue
-
-        steps = np.linalg.norm(np.diff(path, axis=0) * spacing, axis=1)
-        path_mm = float(steps.sum())
-        if path_mm > max_path_mm:
-            rows.append(dict(row, repair="too long", path_mm=path_mm, reclaimed_ml=0.0))
-            continue
-
-        cap = caps[row["component_id"]]
+        path = row["path"]
+        cap = float(row["median_radius_mm"])
         # the tube is opened in a box around the path, so the EDT stays cheap
         pad = np.ceil(cap / spacing).astype(int) + 1
         low = np.maximum(path.min(axis=0) - pad, 0)
@@ -2093,36 +2178,44 @@ def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_p
         tube = (distance_transform_edt(seed, sampling=spacing) <= cap) & union[box]
         gained = tube & ~work_mask[box]
         reclaimed[box] |= gained
-        rows.append(dict(row, repair="reclaimed", path_mm=path_mm,
+        rows.append(dict(row, repair="reclaimed",
                          reclaimed_ml=float(gained.sum() * np.prod(spacing) / 1000.0)))
 
     return work_mask | reclaimed, reclaimed, rows
 
 
-def print_reclaim(rows, spacing, show=8):
-    """Prints what the repair took back, and what it refused to."""
+def print_reclaim(rows, orphans, spacing, show=8):
+    """
+    Prints what the repair took back, against what it is a repair of.
+
+    The share of the missing centerline reattached is printed next to the
+    absolute figure, because the absolute figure alone reads as a result. A
+    repair that puts back one percent of what is missing has not repaired the
+    tree, and the before/after ratios that follow it are then measuring the
+    stability of the fit against a small perturbation, not the effect of
+    reconnection. Which is worth knowing, but is a different claim.
+    """
     print(f"\n=== reconnection of severed pedicles ===")
-    done = [row for row in rows if row["repair"] == "reclaimed"]
-    refused = [row for row in rows if row["repair"] != "reclaimed"]
-    total = sum(row["reclaimed_ml"] for row in done)
-    length = sum(row["length_mm"] for row in done)
-    print(f"  reclaimed {len(done)}/{len(rows)} severed fragments, putting {length:.0f} mm of "
-          f"orphan centerline back in reach of the root")
+    total = sum(row["reclaimed_ml"] for row in rows)
+    length = sum(row["length_mm"] for row in rows)
+    missing = sum(row["length_mm"] for row in orphans)
+    print(f"  reclaimed {len(rows)} fragment(s), putting {length:.0f} mm of orphan centerline "
+          f"back in reach of the root")
+    print(f"  that is {length / missing:.1%} of the {missing:.0f} mm outside the main tree")
     print(f"  cost: {total:.2f} mL taken back from the other class "
           f"({total * 1000.0 / np.prod(spacing):.0f} voxels)")
-    if done:
-        print("  frag   orphan_mm   path_mm   reclaimed_mL")
-        for row in sorted(done, key=lambda r: -r["length_mm"])[:show]:
-            print(f"  {row['component_id']:4d} {row['length_mm']:11.1f} {row['path_mm']:9.2f} "
-                  f"{row['reclaimed_ml']:14.3f}")
-        if len(done) > show:
-            print(f"  ... {len(done) - show} more")
-    for row in refused:
-        print(f"  refused fragment {row['component_id']} ({row['length_mm']:.0f} mm): {row['repair']}"
-              + (f", path {row['path_mm']:.1f} mm" if row["path_mm"] else ""))
-    if refused:
-        print("  a refused fragment is not a failure of the repair: it says the union route is a "
-              "detour down the other tree, not a mislabelled crossing. Those stay orphans")
+    if rows:
+        print("  frag   orphan_mm   gap_axis   path_mm   detour   reclaimed_mL")
+        for row in sorted(rows, key=lambda r: -r["length_mm"])[:show]:
+            print(f"  {row['component_id']:4d} {row['length_mm']:11.1f} {row['gap_axis_mm']:10.2f} "
+                  f"{row['path_mm']:9.2f} {row['detour']:8.2f} {row['reclaimed_ml']:14.3f}")
+        if len(rows) > show:
+            print(f"  ... {len(rows) - show} more")
+    if missing > 0 and length / missing < 0.10:
+        print(f"  WARNING: under a tenth of the missing centerline was reattached. Read the "
+              f"before/after ratios below as a sensitivity test -- how far the fit moves under a "
+              f"perturbation this small -- and NOT as the impact of reconnection. If they move by "
+              f"more than the perturbation, that is a result about the fit, not about the repair")
 
 
 def synthetic_share(table):
@@ -2447,10 +2540,19 @@ def main():
     parser.add_argument("--reconnect-csv", help="One row per severed fragment: whether it was "
                                                 "reclaimed or refused, the union path length, the "
                                                 "volume taken back and where to look")
-    parser.add_argument("--reconnect-max-mm", type=float, default=20.0,
-                        help="Longest union path that still counts as a mislabelled crossing. "
-                             "Beyond it the route is a detour down the other tree and the fragment "
-                             "is left alone. Default: 20")
+    parser.add_argument("--severed-max-detour", type=float, default=3.0, metavar="RATIO",
+                        help="Longest union path, as a multiple of the direct axis-to-axis gap, "
+                             "that still counts as a mislabelled crossing. Existence of a path "
+                             "proves nothing -- the other tree is connected -- so this is what "
+                             "separates severed from hole. Default: 3")
+    parser.add_argument("--severed-max-calibre", type=float, default=2.0, metavar="RATIO",
+                        help="Widest vessel the path may run through in the other class, as a "
+                             "multiple of the fragment's own radius. Beyond it the route is going "
+                             "down a vein, not across one. Default: 2")
+    parser.add_argument("--severed-max-elbow", type=float, default=60.0, metavar="DEGREES",
+                        help="Largest angle between the fragment's axis at the cut and the "
+                             "direction to where the path attaches. A vessel continues into its "
+                             "pedicle; a detour leaves at an angle. Default: 60")
     parser.add_argument("--angle-offset", type=float, default=DIRECTION_OFFSET,
                         help="Distance from a junction at which the branch direction fit starts, "
                              "in multiples of the local junction radius. Inside that ball the "
@@ -2613,9 +2715,13 @@ def main():
         breakpoint_radius = 2.0 * voxel_size
     breakpoints = find_breakpoints(table, positions, smooth, factors, args.breakpoint_order,
                                    breakpoint_radius)
-    orphans = classify_orphans(
-        analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
-                        compare_distance, compare_inside, compare_union), args.dust_length)
+    orphans = analyze_orphans(parts, positions, world, radii, factors, args.orphan_gap,
+                              compare_distance, compare_inside, compare_union)
+    if compare_union is not None:
+        # one Dijkstra, feeding both the severed/hole split and the repair
+        union_paths(work_mask, other, orphans, positions, radii, work_spacing)
+    orphans = classify_orphans(orphans, args.dust_length, args.severed_max_detour,
+                               args.severed_max_calibre, args.severed_max_elbow)
     metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
                               result["cycles"], len(result["broken"]), orphans,
@@ -2628,9 +2734,8 @@ def main():
         if compare_union is None:
             raise SystemExit("--reconnect-severed needs a second class to take the pedicles back "
                              "from: pass --compare-label or --compare-mask")
-        repaired, added, reclaimed = reclaim_pedicles(work_mask, other, orphans, positions, radii,
-                                                      work_spacing, args.reconnect_max_mm)
-        print_reclaim(reclaimed, work_spacing)
+        repaired, added, reclaimed = reclaim_pedicles(work_mask, other, orphans, work_spacing)
+        print_reclaim(reclaimed, orphans, work_spacing)
         if args.reconnect_csv:
             write_table_csv(args.reconnect_csv, reclaimed, RECLAIM_COLUMNS)
             print(f"wrote {args.reconnect_csv}")
@@ -2667,6 +2772,14 @@ def main():
                     nib.save(nib.Nifti1Image(painted, work_affine), args.repaired_mask)
                     print(f"wrote {args.repaired_mask} (label 1 = segmented, "
                           f"label 2 = {int(added.sum())} reclaimed voxels)")
+                    # this is the segmentation plus the pedicles, not the tree:
+                    # only the tree is restricted to its main component, and
+                    # the fragments the repair did not take are all still here
+                    n_left = connected_components(repaired, structure=np.ones((3, 3, 3), int))[1]
+                    print(f"  it holds {n_left} connected component(s): the file is the "
+                          f"segmentation with the pedicles put back, not the analysed tree. "
+                          f"Everything the repair did not reattach -- holes, dust, refused "
+                          f"fragments -- is still in it, exactly as in the input")
 
     bridge = None
     if args.bridge_sweep is not None:
