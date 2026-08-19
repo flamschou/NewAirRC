@@ -2236,14 +2236,32 @@ def sweep_detour(orphans, work_mask, other, spacing, thresholds, dust_length,
     return rows
 
 
-def print_detour_sweep(rows):
-    """Prints the detour sweep, cost column last because it is the deciding one."""
+def print_detour_sweep(rows, missing):
+    """
+    Prints the detour sweep, cost column last because it is the deciding one.
+
+    Rows that admit no new fragment are marked. A flat stretch of the table
+    is not a plateau in the cost, it is an empty stretch of the detour
+    distribution, and the two read identically if the marker is missing: a
+    threshold picked in the middle of an empty range is arbitrary, whatever
+    the mL/mm column next to it says.
+    """
     print("\n=== severed fragments vs the detour threshold ===")
+    print(f"  shares are of the {missing:.0f} mm of centerline outside the main tree, the same "
+          f"denominator as the orphan report")
     print("  detour   n   recovered_mm   share_of_missing   reclaimed_mL   mL per mm")
+    previous = None
     for row in rows:
+        same = "  (no fragment in this step)" if previous is not None and row["n"] == previous else ""
         print(f"  {row['detour']:6.2f} {row['n']:3d} {row['length_mm']:14.1f} "
-              f"{row['share']:18.1%} {row['reclaimed_ml']:14.2f} {row['ml_per_mm']:11.4f}")
+              f"{row['share']:18.1%} {row['reclaimed_ml']:14.2f} {row['ml_per_mm']:11.4f}{same}")
+        previous = row["n"]
     usable = [row for row in rows if row["n"] > 0]
+    counts = {row["n"] for row in rows}
+    if len(counts) <= 1:
+        print("  the threshold does nothing over this range: no fragment's detour falls in it. "
+              "Widen the range before reading anything into the cost column")
+        return
     if len(usable) >= 2:
         best = min(usable, key=lambda row: row["ml_per_mm"])
         print(f"  cheapest reconnection per millimetre at detour {best['detour']:.2f} "
@@ -2251,7 +2269,7 @@ def print_detour_sweep(rows):
               f"{best['share']:.1%} of the missing length)")
         print("  a rising mL/mm means the extra fragments are being reached by long tortuous "
               "tubes, not by crossings: past that point the repair is fabricating more geometry "
-              "than it recovers")
+              "than it recovers. Read it off a row that actually admitted a fragment")
 
 
 def print_reclaim(rows, orphans, spacing, show=8):
@@ -2610,7 +2628,7 @@ def main():
     parser.add_argument("--reconnect-csv", help="One row per severed fragment: whether it was "
                                                 "reclaimed or refused, the union path length, the "
                                                 "volume taken back and where to look")
-    parser.add_argument("--severed-max-detour", type=float, default=2.0, metavar="RATIO",
+    parser.add_argument("--severed-max-detour", type=float, default=3.0, metavar="RATIO",
                         help="Longest union path, as a multiple of the direct axis-to-axis gap, "
                              "that still counts as a mislabelled crossing. Existence of a path "
                              "proves nothing -- the other tree is connected -- so this is what "
@@ -2810,7 +2828,8 @@ def main():
                              "or --compare-mask")
         print_detour_sweep(sweep_detour(orphans, work_mask, other, work_spacing,
                                         args.severed_sweep, args.dust_length,
-                                        args.severed_max_calibre, args.severed_max_elbow))
+                                        args.severed_max_calibre, args.severed_max_elbow),
+                           sum(row["length_mm"] for row in orphans))
 
     if args.reconnect_severed:
         if compare_union is None:

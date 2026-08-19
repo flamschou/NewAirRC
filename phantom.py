@@ -149,6 +149,19 @@ def degrade(volume, spacing, blur_mm, noise, threshold, rng):
     return volume >= threshold
 
 
+def write_mask(mask, spacing, origin, path):
+    """Writes the rasterized phantom with the affine its coordinates imply."""
+    affine = np.eye(4)
+    affine[:3, :3] = np.diag([spacing] * 3)
+    affine[:3, 3] = origin
+    nib.save(nib.Nifti1Image(mask.astype(np.uint8), affine), path)
+
+
+def default_blur(spacing, blur=None):
+    """Point spread function used when none is given: two thirds of a voxel."""
+    return (2.0 / 3.0) * spacing if blur is None else blur
+
+
 def write_segments_csv(path, segments):
     """The ground truth, one row per segment."""
     columns = ("segment_id", "parent_id", "strahler", "length_mm", "diameter_mm",
@@ -159,6 +172,22 @@ def write_segments_csv(path, segments):
                              for c in columns))
     with open(path, "w") as handle:
         handle.write("\n".join(rows) + "\n")
+
+
+def usable_orders(segments, orders, spacing):
+    """
+    The orders whose mean diameter clears three voxels, at this spacing.
+
+    A mechanical criterion, computed from the imposed tree before anything is
+    measured, so the fit range of the calibration run is fixed in advance
+    rather than chosen once the answer is visible.
+    """
+    keep = []
+    for order in range(1, orders + 1):
+        group = [s for s in segments if s["strahler"] == order]
+        if group and float(np.mean([s["diameter_mm"] for s in group])) / spacing >= 3.0:
+            keep.append(order)
+    return keep
 
 
 def print_truth(segments, orders, spacing, rd, rl):
@@ -187,6 +216,11 @@ def print_truth(segments, orders, spacing, rd, rl):
         if voxels >= 3.0:
             usable.append(order)
         print(f"{order:3d} {len(group):5d} {diameter:13.3f} {length:11.3f} {voxels:20.2f}{flag}")
+    print("R_b = 2.000 and the Murray exponent are properties of the construction, not targets: "
+          "the tree is a symmetric binary tree, so every junction splits in two and R_b is 2 by "
+          "definition, and log(2)/log(R_d) follows from R_d alone. This phantom calibrates R_d "
+          "and R_l. It cannot calibrate R_b, because what is worth measuring there is the excess "
+          "over 2 that asymmetry produces, and there is no asymmetry here")
     if usable:
         print(f"the chain can only be held to orders {min(usable)}..{max(usable)} at {spacing} mm; "
               f"run centerline.py with --fit-orders {min(usable)} {max(usable)}")
@@ -224,7 +258,7 @@ def main():
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    blur = (2.0 / 3.0) * args.spacing if args.blur is None else args.blur
+    blur = default_blur(args.spacing, args.blur)
 
     segments = build_tree(args.orders, args.root_diameter, args.root_length, args.rd, args.rl,
                           np.radians(0.5 * args.angle), args.jitter, rng)
@@ -237,10 +271,7 @@ def main():
     print(f"mask: {int(mask.sum())} voxels ({mask.sum() * args.spacing ** 3 / 1000.0:.2f} mL), "
           f"blur sigma {blur:.2f} mm, noise {args.noise}")
 
-    affine = np.eye(4)
-    affine[:3, :3] = np.diag([args.spacing] * 3)
-    affine[:3, 3] = origin
-    nib.save(nib.Nifti1Image(mask.astype(np.uint8), affine), args.output)
+    write_mask(mask, args.spacing, origin, args.output)
     print(f"wrote {args.output}")
     if args.segments_csv:
         write_segments_csv(args.segments_csv, segments)
