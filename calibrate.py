@@ -21,6 +21,13 @@ turns a measured 1.52 into a statement about the tree.
 R_b is deliberately absent. The phantom is a symmetric binary tree, so its
 R_b is 2 by construction and calibrating against it would measure nothing.
 
+Run it with the blur left at its default. Turning the blur off looks like the
+cleaner experiment and is the opposite: the raster carries partial coverage,
+and thresholding that with no blur leaves a staircase surface harder than any
+acquisition produces. The EDT reads the staircase, and one voxel of it is a
+larger share of a thin vessel than of a thick one -- which is a bias on R_d,
+not a neutral simplification.
+
 Usage:
     python calibrate.py --rd 1.30 1.45 1.56 1.70 1.85 --spacing 0.80 1.05 1.31 \
         --measured-rd 1.517 1.430 --out calibration.csv
@@ -220,6 +227,13 @@ def main():
     parser.add_argument("--keep", help="Directory to keep the phantoms and per-case CSVs in")
     args = parser.parse_args()
 
+    if args.blur == 0:
+        print("  NOTE: --blur 0 does not isolate the chain, it hardens the phantom. The raster "
+              "carries partial coverage; thresholding it with no blur leaves a staircase surface "
+              "harder than any acquisition produces, the EDT reads that staircase, and the error "
+              "weighs more on a thin vessel than on a thick one -- which compresses R_d. Measured "
+              "here it costs about a point of bias at R_d 1.56 and two at 1.75. Keep the default "
+              "blur for any number meant to describe a real image")
     if args.pin_smallest and args.pin_length is None:
         args.pin_length = 4.0 * args.pin_smallest
     workdir = args.keep or tempfile.mkdtemp(prefix="calibrate_")
