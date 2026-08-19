@@ -2016,6 +2016,11 @@ def main():
         if other.shape != mask.shape:
             raise SystemExit(f"--compare-mask has shape {other.shape}, the input has {mask.shape}; "
                              f"they have to be on the same grid")
+        # counted before resampling: the working grid is isotropic at the
+        # smallest input spacing, so its voxels are smaller and a count taken
+        # there is not comparable to the input-grid count printed for --label
+        compare_voxels = int(other.sum())
+        compare_ml = compare_voxels * float(np.prod(other_spacing)) / 1000.0
         if not args.no_resample:
             other = resample_isotropic(other, other_affine, other_spacing, args.spacing)[0]
         if other.shape != work_mask.shape or not other.any():
@@ -2026,7 +2031,7 @@ def main():
         compare_name = os.path.basename(compare_path)
         if compare_path == args.input:
             compare_name = f"label {args.compare_label} of the same file"
-        print(f"compare mask: {compare_name}, {int(other.sum())} voxels")
+        print(f"compare mask: {compare_name}, {compare_voxels} voxels ({compare_ml:.2f} mL)")
     result = build_tree(base_graph, positions, radii, world, voxel_size, args, args.radius_factor)
     if result is None:
         raise SystemExit("nothing left after pruning, lower --min-branch-length or --radius-factor")
