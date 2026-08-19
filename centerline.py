@@ -2504,40 +2504,51 @@ def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors
     ratios move across a plausible range of k then they are a property of the
     pruning and not of the tree, and the sweep is the only thing that can
     tell the two apart. Report it next to the ratios, not instead of them.
+
+    Both countings come out, one row each, for the same reason `print_ratios`
+    prints both: segments and elements give different N and different mean
+    lengths, so they give different R_b and R_l, and which of the two is
+    stable under pruning is not something to decide by a default flag. On a
+    tree whose segmental length fit is poor, the segmental sweep can only
+    report that poor fit wobbling.
     """
     rows = []
     for k in factors_list:
         result = build_tree(base_graph, positions, radii, world, voxel_size, args, k)
         if result is None:
-            rows.append({"radius_factor": k, "n_branches": 0, "n_elements": 0, "n_leaves": 0,
-                         "R_b": None, "R_d": None, "R_l": None, "r2_b": None, "r2_d": None,
-                         "r2_l": None, "order_min": None, "order_max": None})
+            rows.extend({"radius_factor": k, "counting": counting, "n_branches": 0,
+                         "n_elements": 0, "n_leaves": 0, "R_b": None, "R_d": None, "R_l": None,
+                         "r2_b": None, "r2_d": None, "r2_l": None,
+                         "order_min": None, "order_max": None}
+                        for counting in ("segment", "element"))
             continue
         elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
                                                 args.fit_min_voxels * voxel_size, args.prespecified)
-        fits = ratios[args.count]["fits"]
-        orders = ratios[args.count]["orders"]
-        rows.append({
-            "radius_factor": k,
-            "n_branches": len(result["table"]),
-            "n_elements": len(elements),
-            "n_leaves": sum(1 for b in result["table"] if b["is_terminal"]),
-            "R_b": fits["R_b"]["ratio"] if fits["R_b"] else None,
-            "R_d": fits["R_d"]["ratio"] if fits["R_d"] else None,
-            "R_l": fits["R_l"]["ratio"] if fits["R_l"] else None,
-            "r2_b": fits["R_b"]["r2"] if fits["R_b"] else None,
-            "r2_d": fits["R_d"]["r2"] if fits["R_d"] else None,
-            "r2_l": fits["R_l"]["r2"] if fits["R_l"] else None,
-            "order_min": min(orders) if orders else None,
-            "order_max": max(orders) if orders else None,
-        })
+        for counting in ("segment", "element"):
+            fits = ratios[counting]["fits"]
+            orders = ratios[counting]["orders"]
+            rows.append({
+                "radius_factor": k,
+                "counting": counting,
+                "n_branches": len(result["table"]),
+                "n_elements": len(elements),
+                "n_leaves": sum(1 for b in result["table"] if b["is_terminal"]),
+                "R_b": fits["R_b"]["ratio"] if fits["R_b"] else None,
+                "R_d": fits["R_d"]["ratio"] if fits["R_d"] else None,
+                "R_l": fits["R_l"]["ratio"] if fits["R_l"] else None,
+                "r2_b": fits["R_b"]["r2"] if fits["R_b"] else None,
+                "r2_d": fits["R_d"]["r2"] if fits["R_d"] else None,
+                "r2_l": fits["R_l"]["r2"] if fits["R_l"] else None,
+                "order_min": min(orders) if orders else None,
+                "order_max": max(orders) if orders else None,
+            })
     return rows
 
 
 SWEEP_MIN_R2 = 0.90
 
 
-def print_sweep(rows, ordering, counting):
+def print_sweep(all_rows, ordering):
     """
     Prints the ratios against the pruning strength, and their spread.
 
@@ -2552,6 +2563,13 @@ def print_sweep(rows, ordering, counting):
     without saying anything about the pruning -- the scatter is the fit
     failing, not k acting -- so it is reported as an unusable fit instead.
     """
+    for counting in ("segment", "element"):
+        print_sweep_table([row for row in all_rows if row["counting"] == counting],
+                          ordering, counting)
+
+
+def print_sweep_table(rows, ordering, counting):
+    """One counting's worth of the pruning sweep."""
     print(f"\n=== pruning sensitivity ({ordering}, {counting}s) ===")
     print("    k  branches  elements  leaves   orders    R_b    R2     R_d    R2     R_l    R2")
     for row in rows:
@@ -2593,7 +2611,7 @@ def print_sweep(rows, ordering, counting):
         print(line)
 
 
-SWEEP_COLUMNS = ("radius_factor", "n_branches", "n_elements", "n_leaves",
+SWEEP_COLUMNS = ("radius_factor", "counting", "n_branches", "n_elements", "n_leaves",
                  "order_min", "order_max", "R_b", "r2_b", "R_d", "r2_d", "R_l", "r2_l")
 
 
@@ -2615,7 +2633,8 @@ def main():
                                               "its distance to the tree and its coordinates")
     parser.add_argument("--bridge-csv", help="The bridging curve, one row per dilation radius")
     parser.add_argument("--quality-csv", help="Single-row CSV of the quality metrics, to concatenate over cases")
-    parser.add_argument("--sweep-csv", help="Ratios against the pruning strength, one row per k")
+    parser.add_argument("--sweep-csv", help="Ratios against the pruning strength, one row per k "
+                                            "and counting (both are always swept)")
     parser.add_argument("--vtk", help="Legacy VTK polydata to write")
     parser.add_argument("--no-report", action="store_true",
                         help="Skip the per-order, leaf and bifurcation tables. The ratios and the "
@@ -2630,8 +2649,9 @@ def main():
     parser.add_argument("--count", choices=("segment", "element"), default="segment",
                         help="Unit of the per-order table and of the ratios. A segment runs between "
                              "two bifurcations, an element is a run of segments of the same order. "
-                             "Both are always fitted and both are printed; this picks the one the "
-                             "per-order table and --orders-csv describe. Default: segment")
+                             "Both are always fitted and both are printed, here and in "
+                             "--sweep-k; this picks only the one the per-order table and "
+                             "--orders-csv describe. Default: segment")
     parser.add_argument("--fit-orders", type=int, nargs=2, metavar=("MIN", "MAX"), default=None,
                         help="Orders the ratios are fitted over. Fix this before looking at the "
                              "results. Default: every order whose mean diameter clears "
@@ -2851,7 +2871,7 @@ def main():
     sweep = None
     if args.sweep_k:
         sweep = sweep_pruning(base_graph, positions, radii, world, voxel_size, args, args.sweep_k)
-        print_sweep(sweep, args.ordering, args.count)
+        print_sweep(sweep, args.ordering)
 
     breakpoint_radius = args.breakpoint_radius
     if breakpoint_radius is None:
