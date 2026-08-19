@@ -31,7 +31,7 @@ Outputs:
     --elements-csv  one row per element (same-order run of segments)
     --orders-csv    one row per order
     --ratios-csv    R_b / R_d / R_l with their confidence intervals
-    --bifurcations-csv  one row per junction (angle, area ratio, Murray)
+    --bifurcations-csv  one row per junction (the three angles, area ratio, Murray)
     --orphans-csv   one row per component outside the main tree, with its
                     wall-to-wall distance to it and where to look
     --bridge-csv    the bridging curve: centerline recovered per dilation radius
@@ -43,6 +43,8 @@ Usage:
     python centerline.py --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
     python centerline.py --input artery.nii.gz --ordering strahler_dd --fit-orders 1 6
     python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 --bridge-sweep
+    python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 --reconnect-severed
+    python centerline.py --input artery.nii.gz --angle-sweep 0 0.5 1 1.5 2 2.5
 
 See phantom.py for the calibration tree that says how much of what this
 prints is anatomy and how much is the voxel size.
@@ -62,6 +64,7 @@ from scipy.optimize import brentq
 from scipy.spatial import cKDTree
 from scipy.stats import t as student_t
 from skimage.draw import line_nd
+from skimage.graph import MCP_Geometric
 from skimage.morphology import skeletonize
 
 # Half of the 26-neighbourhood: the lexicographically positive offsets, so
@@ -432,7 +435,19 @@ def polyline_length(points):
     return float(np.linalg.norm(np.diff(points, axis=0), axis=1).sum())
 
 
-def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start=True):
+# How far from the junction node the direction fit is allowed to start, in
+# multiples of the local junction radius. Inside that ball the centerline is
+# not the vessel axis: the daughters share the blob left by the maximal
+# inscribed sphere, and their skeletons still lean along the parent before
+# peeling off. Fitting from distance 0 therefore reads the bend, not the
+# branch, and inflates every bifurcation angle by tens of degrees. One
+# parental radius is the same rule of thumb `trunk_calibre` trims with; use
+# --angle-sweep to see the plateau it sits on.
+DIRECTION_OFFSET = 1.0
+
+
+def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start=True,
+                    direction_offset=DIRECTION_OFFSET):
     """
     Direction and calibre of a branch as seen from one of its ends.
 
@@ -442,24 +457,42 @@ def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start
     The two use different scales, and both are clamped to the branch so a
     wide vessel is never measured at its far end:
 
-    - the direction is fitted over 2.5 local radii (at most half the
-      branch). Over a couple of voxels only it would snap to the axes of the
-      grid, which piles the bifurcation angles up at 90 degrees. It is the
-      first principal component of the points in that window, not the chord
-      to its last point, so every point contributes.
+    - the direction is fitted over 2.5 local radii, starting
+      `direction_offset` radii away from the end so the blob is left behind
+      entirely, and stopping one radius short of the far end so the blob
+      there is not picked up instead. Over a couple of voxels only it would
+      snap to the axes of the grid, which piles the bifurcation angles up at
+      90 degrees. It is the first principal component of the points in that
+      window, not the chord to its last point, so every point contributes.
     - the calibre is the median radius over [1, 2] local radii (at most the
       proximal half of the branch), just past the junction blob and close
       enough that the vessel has not tapered yet.
 
-    Returns (unit direction leaving the end, radius in mm).
+    A branch shorter than the offset has no clean window to fit: rather than
+    report a direction measured inside the blob and let it pass for a
+    measurement, the fit falls back to the whole branch and the third return
+    value goes False, so the bifurcations resting on it can be counted and
+    excluded. That count is part of the result -- pushing the offset out
+    buys angles at the cost of junctions, and both have to be quoted.
+
+    Returns (unit direction leaving the end, radius in mm, direction is clean).
     """
     order = np.asarray(nodes if from_start else nodes[::-1])
     points = world[order]
     distance = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
     total = float(distance[-1])
 
-    span = min(max(2.5 * float(junction_radius), 3.0 * voxel_size), max(0.5 * total, 3.0 * voxel_size))
-    sample = points[distance <= span]
+    reach = max(2.5 * float(junction_radius), 3.0 * voxel_size)
+    start = float(direction_offset) * float(junction_radius)
+    # stop short of the blob at the other end, but never collapse the window
+    stop = min(start + reach, max(total - float(junction_radius), start + 3.0 * voxel_size))
+    window = (distance >= start) & (distance <= stop)
+    clean = bool(window.sum() >= 3)
+    if not clean:
+        # too short to clear the blob: fall back to the old window, which
+        # starts at the node, and flag the direction as contaminated
+        window = distance <= min(reach, max(0.5 * total, 3.0 * voxel_size))
+    sample = points[window]
     if len(sample) < 2:
         sample = points[:2]
     axis = np.linalg.svd(sample - sample.mean(axis=0), full_matrices=False)[2][0]
@@ -469,10 +502,10 @@ def branch_geometry(nodes, world, radii, junction_radius, voxel_size, from_start
     low = min(max(float(junction_radius), 2.0 * voxel_size), max(0.25 * total, 2.0 * voxel_size))
     high = min(max(2.0 * float(junction_radius), low + 2.0 * voxel_size),
                max(0.5 * total, low + 2.0 * voxel_size))
-    window = (distance >= min(low, total)) & (distance <= high)
-    if not window.any():
-        window = distance >= min(low, total)
-    return direction, float(np.median(radii[order[window]]))
+    calibre_window = (distance >= min(low, total)) & (distance <= high)
+    if not calibre_window.any():
+        calibre_window = distance >= min(low, total)
+    return direction, float(np.median(radii[order[calibre_window]])), clean
 
 
 def trunk_calibre(nodes, world, radii, head_radius, tail_radius, voxel_size):
@@ -521,7 +554,7 @@ def murray_exponent(parent_radius, child_radii):
     return float(brentq(lambda n: np.sum(ratios ** n) - 1.0, 1e-3, 50.0))
 
 
-def branch_table(graph, ordered, smooth, radii, voxel_size):
+def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIRECTION_OFFSET):
     """
     Per-branch measurements, in branch order (proximal -> distal), read on
     the smoothed centerline.
@@ -538,9 +571,11 @@ def branch_table(graph, ordered, smooth, radii, voxel_size):
         chord = float(np.linalg.norm(points[-1] - points[0]))
         values = radii[nodes]
 
-        head_axis, head_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[0]], voxel_size)
-        tail_axis, tail_calibre = branch_geometry(nodes, smooth, radii, radii[nodes[-1]], voxel_size,
-                                                  from_start=False)
+        head_axis, head_calibre, head_clean = branch_geometry(
+            nodes, smooth, radii, radii[nodes[0]], voxel_size, direction_offset=direction_offset)
+        tail_axis, tail_calibre, tail_clean = branch_geometry(
+            nodes, smooth, radii, radii[nodes[-1]], voxel_size, from_start=False,
+            direction_offset=direction_offset)
         # a free end carries no junction blob, so nothing has to be cut there
         head_junction = radii[nodes[0]] if graph.degree(nodes[0]) > 1 else 0.0
         tail_junction = radii[nodes[-1]] if graph.degree(nodes[-1]) > 1 else 0.0
@@ -564,6 +599,10 @@ def branch_table(graph, ordered, smooth, radii, voxel_size):
             "nodes": nodes,
             "head_axis": head_axis,
             "tail_axis": tail_axis,
+            # tail_axis looks back UP the branch, towards its start: the
+            # direction the branch leaves a junction by is -tail_axis
+            "head_axis_clean": head_clean,
+            "tail_axis_clean": tail_clean,
         })
     return table
 
@@ -763,11 +802,39 @@ def build_elements(table, order_key, smooth):
     return elements
 
 
+def vector_angle(u, v):
+    """Angle between two vectors, in degrees."""
+    cosine = float(np.dot(u, v)) / (float(np.linalg.norm(u)) * float(np.linalg.norm(v)))
+    return float(np.degrees(np.arccos(np.clip(cosine, -1.0, 1.0))))
+
+
 def analyze_bifurcations(table, order_key, min_radius):
     """
     Measures every bifurcation: the parent branch that ends there and the
     daughters that leave it. Radii and directions come from the branch
     table, i.e. measured a couple of radii away from the junction.
+
+    All three angles of the junction are reported, not just the one between
+    the daughters, because on their own the daughter-daughter angles cannot
+    be told apart from a convention error. The parent leaves the junction
+    along -tail_axis (tail_axis is fitted looking back up the branch), and
+    getting that sign wrong turns every parent-daughter angle into its
+    supplement -- a clean, constant offset that no daughter-daughter
+    statistic would reveal.
+
+    `planarity_defect_deg` is (parent-d1) + (parent-d2) - (d1-d2). For any
+    three unit vectors it is >= 0, and it is 0 exactly when the three are
+    coplanar with the parent lying between the daughters, which is what a
+    bifurcation looks like. Its median over the tree is therefore the
+    self-consistency check on the angle measurement as a whole: a few
+    degrees is anatomy, and a large positive median is the signature of a
+    parent direction that points somewhere the geometry does not allow --
+    a reversed sign lands it near 360 - 2*theta.
+
+    `angle_clean` flags the junctions where all three directions were
+    fitted clear of the junction blob (see `branch_geometry`). The angles of
+    the others are measured inside the bend and read far too wide; they are
+    kept in the table but must be counted separately.
 
     `well_resolved` flags the junctions where the parent and every daughter
     are wider than `min_radius` (a few voxels). Below that the radii
@@ -782,12 +849,20 @@ def analyze_bifurcations(table, order_key, min_radius):
             continue
         parent_radius = parent["distal_calibre_mm"]
         child_radii = [c["proximal_calibre_mm"] for c in children]
+        # the parent arrives at the junction along -tail_axis; both daughters
+        # leave it along their own head_axis. All three now point out of the
+        # junction the same way, which is what makes them comparable
+        parent_axis = -np.asarray(parent["tail_axis"], float)
 
-        angle = None
+        angle = parent_1 = parent_2 = defect = None
         if len(children) == 2:
-            cosine = float(np.clip(np.dot(children[0]["head_axis"], children[1]["head_axis"]), -1.0, 1.0))
-            angle = float(np.degrees(np.arccos(cosine)))
+            first, second = children[0]["head_axis"], children[1]["head_axis"]
+            angle = vector_angle(first, second)
+            parent_1 = vector_angle(parent_axis, first)
+            parent_2 = vector_angle(parent_axis, second)
+            defect = parent_1 + parent_2 - angle
 
+        clean = int(parent["tail_axis_clean"] and all(c["head_axis_clean"] for c in children))
         bifurcations.append({
             "node": parent["nodes"][-1],
             "order": parent[order_key],
@@ -798,6 +873,10 @@ def analyze_bifurcations(table, order_key, min_radius):
             "asymmetry": float(min(child_radii) / max(child_radii)) if max(child_radii) > 0 else None,
             "murray_exponent": murray_exponent(parent_radius, child_radii),
             "angle_deg": angle,
+            "angle_parent_first_deg": parent_1,
+            "angle_parent_second_deg": parent_2,
+            "planarity_defect_deg": defect,
+            "angle_clean": clean,
             "well_resolved": int(min(parent_radius, *child_radii) >= min_radius),
         })
     return bifurcations
@@ -869,7 +948,7 @@ def semilog_fit(orders, values):
 RATIO_KEYS = (("R_b", "n_branches", -1), ("R_d", "mean_diameter_mm", 1), ("R_l", "mean_length_mm", 1))
 
 
-def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
+def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, prespecified=False):
     """
     Horsfield's three ratios, read as the slopes of the semi-log plots of the
     branch count, the mean diameter and the mean length against the order.
@@ -886,17 +965,25 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
     are dropped, and an explicit `order_range` overrides that filter. Fix the
     range before looking at the numbers: chosen afterwards it is a knob, and
     it is the one that most easily turns any tree into a published value.
+
+    `prespecified` is that claim, and it is an input, not something read off
+    the arguments. Whether a range was fixed in advance depends on the order
+    in which the operator did things, which no flag can witness: passing
+    --fit-orders after seeing the table and passing it before produce the
+    same command line. So it defaults to False for both the explicit range
+    and the diameter filter, and only --prespecified sets it.
     """
     direction = ORDER_DIRECTION[ordering]
     rows = [row for row in summary if row["order"] >= 0 and row["n_branches"] > 0
             and row["mean_diameter_mm"] > 0 and row["mean_length_mm"] > 0]
+    claim = "pre-specified" if prespecified else "NOT declared pre-specified"
     if order_range is not None:
         low, high = order_range
         rows = [row for row in rows if low <= row["order"] <= high]
-        selection = f"orders {low}..{high} (pre-specified)"
+        selection = f"orders {low}..{high} ({claim})"
     else:
         rows = [row for row in rows if row["mean_diameter_mm"] >= min_diameter]
-        selection = f"orders where the mean diameter clears {min_diameter:.2f} mm (not pre-specified)"
+        selection = f"orders where the mean diameter clears {min_diameter:.2f} mm ({claim})"
 
     orders = [row["order"] for row in rows]
     fits = {}
@@ -910,7 +997,7 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0):
         fits[name] = dict(fit, ratio=10.0 ** (sign * direction * fit["slope"]),
                           ratio_low=bounds[0], ratio_high=bounds[1])
     return {"selection": selection, "rows": rows, "orders": orders, "fits": fits,
-            "min_diameter": min_diameter}
+            "min_diameter": min_diameter, "prespecified": bool(prespecified)}
 
 
 def count_peak(rows, rise=1.2):
@@ -1001,7 +1088,7 @@ def ratio_rows(result, ordering, counting):
             "n_orders": fit["n_orders"] if fit else len(orders),
             "order_min": min(orders) if orders else None,
             "order_max": max(orders) if orders else None,
-            "prespecified": int("pre-specified" in result["selection"]),
+            "prespecified": int(result["prespecified"]),
         })
     return out
 
@@ -1262,6 +1349,9 @@ def analyze_orphans(parts, positions, world, radii, factors, wall_gap,
         rows.append({
             "compare_gap_mm": compare_gap, "compare_overlap": overlap, "nearer": nearer,
             "union_reconnects": reconnects,
+            # working-grid skeleton nodes of the narrowest crossing, kept for
+            # the repair; not CSV columns
+            "orphan_node": orphan_node, "main_node": main_node,
             "component_id": index,
             "length_mm": float(length),
             "n_points": int(len(nodes)),
@@ -1539,6 +1629,46 @@ def check_monotonicity(rows, order_key):
             for before, after in zip(rows, rows[1:]) if after["mean_diameter_mm"] > before["mean_diameter_mm"]]
 
 
+def print_angles(bifurcations):
+    """
+    The three angles of the junction, over the bifurcations whose directions
+    were fitted clear of the junction blob.
+
+    Both counts are printed because they trade off: the offset that buys a
+    clean direction is the offset that disqualifies the short branches, and
+    an angle quoted without the fraction it was measured on is not a
+    measurement. The contaminated ones are shown underneath for comparison,
+    never merged in.
+    """
+    pairs = [b for b in bifurcations if b["angle_deg"] is not None]
+    if not pairs:
+        print("angle (deg)       : no two-daughter junction to measure")
+        return
+    clean = [b for b in pairs if b["angle_clean"]]
+    print(f"angles over the {len(clean)}/{len(pairs)} two-daughter junctions with a direction "
+          f"fitted clear of the blob:")
+    if clean:
+        parent_child = [b["angle_parent_first_deg"] for b in clean] + \
+                       [b["angle_parent_second_deg"] for b in clean]
+        print(f"  parent-daughter : {describe(parent_child)}")
+        print(f"  daughter-daughter: {describe([b['angle_deg'] for b in clean])}")
+        defects = [b["planarity_defect_deg"] for b in clean]
+        print(f"  planarity defect : {describe(defects)}   "
+              f"(0 = parent between the daughters in one plane)")
+        median = float(np.median(defects))
+        if median > 30.0:
+            print(f"  WARNING: the median planarity defect is {median:.1f} deg. The parent "
+                  f"direction does not lie between the daughters, which no bifurcation does. "
+                  f"That is a convention fault in the directions, not anatomy -- check the sign "
+                  f"of the parent axis (tail_axis looks back up the branch) before reading any "
+                  f"angle below")
+    contaminated = [b for b in pairs if not b["angle_clean"]]
+    if contaminated:
+        print(f"  the other {len(contaminated)}: branch too short to leave the blob, "
+              f"daughter-daughter {describe([b['angle_deg'] for b in contaminated])} -- "
+              f"measured inside the bend, reads wide, do not quote")
+
+
 def print_analysis(graph, table, summary, bifurcations, order_key, min_radius, counting="segment"):
     """Prints the anatomical report: per order, leaves, bifurcations, tree."""
     label = {"generation": "generation (main path)", "strahler": "Strahler order",
@@ -1580,13 +1710,13 @@ def print_analysis(graph, table, summary, bifurcations, order_key, min_radius, c
               f"({trifurcations} junctions with more than 2)")
         print(f"parent radius (mm): {describe([b['parent_radius_mm'] for b in bifurcations])}")
         print(f"asymmetry ratio   : {describe([b['asymmetry'] for b in bifurcations])}")
-        print(f"angle (deg)       : {describe([b['angle_deg'] for b in bifurcations])}")
+        print_angles(bifurcations)
         print(f"\nrestricted to the {len(resolved)} bifurcations where the parent and both "
               f"daughters exceed {min_radius:.2f} mm:")
         if resolved:
             print(f"area ratio        : {describe([b['area_ratio'] for b in resolved])}")
             print(f"Murray exponent   : {describe([b['murray_exponent'] for b in resolved])}")
-            print(f"angle (deg)       : {describe([b['angle_deg'] for b in resolved])}")
+            print_angles(resolved)
         else:
             print("  none -- the mask does not resolve any vessel well enough")
 
@@ -1669,7 +1799,9 @@ ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm",
                  "mean_tortuosity", "mean_tip_radius_mm")
 
 BIFURCATION_COLUMNS = ("node", "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
-                       "area_ratio", "asymmetry", "murray_exponent", "angle_deg", "well_resolved")
+                       "area_ratio", "asymmetry", "murray_exponent", "angle_deg",
+                       "angle_parent_first_deg", "angle_parent_second_deg",
+                       "planarity_defect_deg", "angle_clean", "well_resolved")
 
 ELEMENT_COLUMNS = ("element_id", "order", "n_segments", "length_mm", "chord_mm", "tortuosity",
                    "calibre_mm", "mean_radius_mm", "proximal_calibre_mm", "distal_calibre_mm",
@@ -1733,6 +1865,35 @@ def default_output_path(mask_path, suffix=CENTERLINE_SUFFIX):
 # --------------------------------------------------------------------------- #
 # pipeline
 # --------------------------------------------------------------------------- #
+def skeletonize_graph(work_mask, work_affine, work_spacing, verbose=True):
+    """
+    The whole mask-to-graph stage: radii, thinning, voxel graph, world
+    coordinates. Everything downstream of it works on the graph alone.
+
+    It is a function rather than a stretch of `main` because the repaired
+    mask has to go through exactly the same stage as the original one. Any
+    difference between the two runs would be indistinguishable from the
+    effect being measured, so there is only one copy of it.
+
+    Returns (radius_map, skeleton, graph, positions, radii, voxel size, world).
+    """
+    # the EDT stops at the last inside voxel centre, so the wall sits about
+    # half a voxel further out
+    radius_map = distance_transform_edt(work_mask, sampling=work_spacing) + 0.5 * work_spacing.min()
+    skeleton = skeletonize(work_mask) > 0  # older skimage returns 0/255 uint8 in 3D
+    if verbose:
+        print(f"skeleton: {int(skeleton.sum())} voxels")
+
+    graph, positions = build_voxel_graph(skeleton, work_spacing)
+    contract_junction_clusters(graph, positions, work_mask)
+    update_edge_weights(graph, positions, work_spacing)
+    radii = radius_map[tuple(np.rint(positions).astype(int).T)]
+
+    voxel_size = float(work_spacing.min())
+    world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
+    return radius_map, skeleton, graph, positions, radii, voxel_size, world
+
+
 def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_factor):
     """
     Everything between the raw skeleton graph and the ordered branch table:
@@ -1768,7 +1929,8 @@ def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_fac
     branches = extract_branches(graph)
     ordered = order_branches(graph, branches, positions, radii, root_voxel)
     smooth = smooth_centerline(ordered, world, voxel_size, args.smoothing, args.max_shift)
-    table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size))
+    table = compute_orders(branch_table(graph, ordered, smooth, radii, voxel_size,
+                                        getattr(args, "angle_offset", DIRECTION_OFFSET)))
     converged = diameter_defined_strahler(table)
 
     return {"graph": graph, "table": table, "smooth": smooth, "parts": parts,
@@ -1776,7 +1938,156 @@ def build_tree(base_graph, positions, radii, world, voxel_size, args, radius_fac
             "cycles": int(cycles), "dd_converged": converged}
 
 
-def summarize(result, ordering, order_range, min_diameter):
+def reclaim_pedicles(work_mask, other, orphans, positions, radii, spacing, max_path_mm):
+    """
+    Puts back the vessel that the A/V classifier gave to the other class.
+
+    A severed fragment is one that is disconnected from the trunk in its own
+    class but connected to it in the union: the few millimetres joining them
+    exist in the image and were segmented, they were just labelled venous.
+    Nothing has to be invented to reattach it -- the voxels are already
+    there, in `other`, and the repair is to take them back.
+
+    The path is the minimum-cost route through the union from the trunk to
+    the fragment, with cost 1/EDT, i.e. cheap down the middle of a vessel and
+    expensive against a wall. That is the standard minimal-path vessel cost,
+    and it matters here: a purely geometric shortest path would cut the
+    corner and hug the union's surface, and the skeleton of the result would
+    then run along the wall instead of the axis.
+
+    The EDT is clipped at the calibre of the vessels being rejoined before it
+    is inverted, and without that clip the cost is not usable for this job.
+    Unclipped, a wide vessel is arbitrarily cheap to travel, so the cheapest
+    route from a fragment four millimetres away runs tens of millimetres down
+    the nearest trunk and back -- the cost was designed to trace a centerline
+    along a vessel, not to cross between two. Clipped, extra width past the
+    calibre buys no further discount, staying off the wall still does, and
+    length is decisive again beyond that scale.
+
+    Around that path a tube is opened, no wider than the narrower of the two
+    vessel ends being joined and always clipped to the union. Both caps are
+    what keeps the repair from swallowing the vein it crosses: the reclaimed
+    pedicle can be no wider than the artery it restores, and can contain no
+    voxel that was not already segmented as vessel.
+
+    A path longer than `max_path_mm` is refused rather than reclaimed. Beyond
+    a couple of centimetres the route is no longer a crossing that was
+    mislabelled, it is a detour down the vein, and the "repair" would be
+    inventing an anastomosis. Those are reported, not silently dropped.
+
+    Returns (repaired mask, one report row per severed fragment).
+    """
+    severed = [row for row in orphans if row["population"] == "severed"]
+    if not severed:
+        return work_mask, []
+
+    union = work_mask | other
+    inside = distance_transform_edt(union, sampling=spacing)
+    caps = {row["component_id"]: float(min(radii[row["orphan_node"]], radii[row["main_node"]]))
+            for row in severed}
+    clip = max(caps.values())
+    costs = np.where(union, 1.0 / np.clip(inside, 1e-6, clip), np.inf)
+
+    # the trunk is the mask component the main tree sits in, not the tree
+    # itself: the path has to be allowed to leave the trunk anywhere
+    labels = connected_components(work_mask, structure=np.ones((3, 3, 3), dtype=int))[0]
+    trunk_voxel = tuple(np.rint(positions[severed[0]["main_node"]]).astype(int))
+    starts = np.argwhere(labels == labels[trunk_voxel])
+
+    mcp = MCP_Geometric(costs, sampling=tuple(float(s) for s in spacing), fully_connected=True)
+    mcp.find_costs(starts.tolist())
+
+    reclaimed = np.zeros_like(work_mask)
+    rows = []
+    for row in severed:
+        end = tuple(np.rint(positions[row["orphan_node"]]).astype(int))
+        try:
+            path = np.asarray(mcp.traceback(end))
+        except ValueError:
+            path = None
+        if path is None or len(path) < 2:
+            rows.append(dict(row, repair="unreachable", path_mm=None, reclaimed_ml=0.0))
+            continue
+
+        steps = np.linalg.norm(np.diff(path, axis=0) * spacing, axis=1)
+        path_mm = float(steps.sum())
+        if path_mm > max_path_mm:
+            rows.append(dict(row, repair="too long", path_mm=path_mm, reclaimed_ml=0.0))
+            continue
+
+        cap = caps[row["component_id"]]
+        # the tube is opened in a box around the path, so the EDT stays cheap
+        pad = np.ceil(cap / spacing).astype(int) + 1
+        low = np.maximum(path.min(axis=0) - pad, 0)
+        high = np.minimum(path.max(axis=0) + pad + 1, work_mask.shape)
+        box = tuple(slice(a, b) for a, b in zip(low, high))
+        seed = np.ones(tuple(high - low), dtype=bool)
+        seed[tuple((path - low).T)] = False
+        tube = (distance_transform_edt(seed, sampling=spacing) <= cap) & union[box]
+        gained = tube & ~work_mask[box]
+        reclaimed[box] |= gained
+        rows.append(dict(row, repair="reclaimed", path_mm=path_mm,
+                         reclaimed_ml=float(gained.sum() * np.prod(spacing) / 1000.0)))
+
+    return work_mask | reclaimed, rows
+
+
+def print_reclaim(rows, spacing, show=8):
+    """Prints what the repair took back, and what it refused to."""
+    print(f"\n=== reconnection of severed pedicles ===")
+    done = [row for row in rows if row["repair"] == "reclaimed"]
+    refused = [row for row in rows if row["repair"] != "reclaimed"]
+    total = sum(row["reclaimed_ml"] for row in done)
+    length = sum(row["length_mm"] for row in done)
+    print(f"  reclaimed {len(done)}/{len(rows)} severed fragments, putting {length:.0f} mm of "
+          f"orphan centerline back in reach of the root")
+    print(f"  cost: {total:.2f} mL taken back from the other class "
+          f"({total * 1000.0 / np.prod(spacing):.0f} voxels)")
+    if done:
+        print("  frag   orphan_mm   path_mm   reclaimed_mL")
+        for row in sorted(done, key=lambda r: -r["length_mm"])[:show]:
+            print(f"  {row['component_id']:4d} {row['length_mm']:11.1f} {row['path_mm']:9.2f} "
+                  f"{row['reclaimed_ml']:14.3f}")
+        if len(done) > show:
+            print(f"  ... {len(done) - show} more")
+    for row in refused:
+        print(f"  refused fragment {row['component_id']} ({row['length_mm']:.0f} mm): {row['repair']}"
+              + (f", path {row['path_mm']:.1f} mm" if row["path_mm"] else ""))
+    if refused:
+        print("  a refused fragment is not a failure of the repair: it says the union route is a "
+              "detour down the other tree, not a mislabelled crossing. Those stay orphans")
+
+
+def compare_ratios(before, after, ordering, counting):
+    """
+    The three ratios before and after the repair, side by side.
+
+    This difference is the measurement the repair exists to produce. R_l is
+    the one to watch: a missing lateral branch fuses two segments into one,
+    which inflates the mean length at the low orders and flattens the slope,
+    so if the severed pedicles were really what depressed R_l, putting them
+    back has to raise it. If it does not move, the missing bifurcations are
+    elsewhere and the truncation explanation was the wrong one.
+    """
+    print(f"\n=== ratios before / after reconnection ({ordering}, {counting}s) ===")
+    print("  ratio     before       after      change    before CI            after CI")
+    for name, _, _ in RATIO_KEYS:
+        old_fit, new_fit = before["fits"][name], after["fits"][name]
+        if old_fit is None or new_fit is None:
+            print(f"  {name:<8}  -")
+            continue
+        change = new_fit["ratio"] - old_fit["ratio"]
+        print(f"  {name:<8} {old_fit['ratio']:7.3f}     {new_fit['ratio']:7.3f}   "
+              f"{change:+8.3f}    [{old_fit['ratio_low']:5.3f}, {old_fit['ratio_high']:5.3f}]   "
+              f"[{new_fit['ratio_low']:5.3f}, {new_fit['ratio_high']:5.3f}]")
+    print(f"  fitted over {before['selection']} then {after['selection']}")
+    if before["orders"] != after["orders"]:
+        print(f"  WARNING: the fit rests on orders {before['orders']} before and {after['orders']} "
+              f"after. The two numbers are not the same measurement -- reconnection changed which "
+              f"orders clear the diameter floor. Pin the range with --fit-orders to compare")
+
+
+def summarize(result, ordering, order_range, min_diameter, prespecified=False):
     """
     Numbers the branches with the chosen ordering, then aggregates them both
     ways -- one row per order for segments, one for elements -- and fits the
@@ -1787,9 +2098,65 @@ def summarize(result, ordering, order_range, min_diameter):
         entry["order"] = entry[ordering]
     elements = build_elements(table, ordering, smooth)
     summaries = {"segment": order_summary(table, "order"), "element": order_summary(elements, "order")}
-    ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter)
+    ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter, prespecified)
               for counting, rows in summaries.items()}
     return elements, summaries, ratios
+
+
+def sweep_angle_offset(graph, table, smooth, radii, voxel_size, order_key, min_radius, offsets):
+    """
+    Re-measures the junction angles with the direction fitted from a range of
+    distances off the node, in multiples of the local junction radius.
+
+    Nothing but the direction window changes: the tree, the branches and the
+    radii are the ones already built. The point is to show whether the angles
+    sit on a plateau or slide with the window -- if they slide, the number
+    quoted is a property of the fit, not of the anatomy. The count of
+    measurable junctions falls as the offset grows, and reading the two
+    columns together is the whole exercise: the offset to keep is the
+    smallest one past which the angles stop moving.
+    """
+    rows = []
+    for offset in offsets:
+        shifted = [dict(entry) for entry in table]
+        for entry in shifted:
+            nodes = entry["nodes"]
+            head, _, head_clean = branch_geometry(nodes, smooth, radii, radii[nodes[0]],
+                                                  voxel_size, direction_offset=offset)
+            tail, _, tail_clean = branch_geometry(nodes, smooth, radii, radii[nodes[-1]], voxel_size,
+                                                  from_start=False, direction_offset=offset)
+            entry["head_axis"], entry["head_axis_clean"] = head, head_clean
+            entry["tail_axis"], entry["tail_axis_clean"] = tail, tail_clean
+        bifurcations = analyze_bifurcations(shifted, order_key, min_radius)
+        pairs = [b for b in bifurcations if b["angle_deg"] is not None]
+        clean = [b for b in pairs if b["angle_clean"]]
+        source = clean or pairs
+        parent_child = [b["angle_parent_first_deg"] for b in source] + \
+                       [b["angle_parent_second_deg"] for b in source]
+        rows.append({
+            "offset": float(offset), "n_pairs": len(pairs), "n_clean": len(clean),
+            "parent_child_deg": float(np.median(parent_child)) if source else float("nan"),
+            "children_deg": float(np.median([b["angle_deg"] for b in source])) if source else float("nan"),
+            "defect_deg": float(np.median([b["planarity_defect_deg"] for b in source])) if source else float("nan"),
+        })
+    return rows
+
+
+def print_angle_sweep(rows):
+    """Prints the angle sweep, with what it costs in measurable junctions."""
+    print("\n=== angle vs direction-fit offset ===")
+    print("  the offset is the distance from the junction node at which the direction fit starts,")
+    print("  in multiples of the local junction radius. 0 is the fit that starts inside the blob")
+    print("  offset   measurable   parent-daughter   daughter-daughter   planarity defect")
+    for row in rows:
+        share = f"{row['n_clean']}/{row['n_pairs']}"
+        print(f"  {row['offset']:6.2f}   {share:>10}   {row['parent_child_deg']:15.1f}   "
+              f"{row['children_deg']:17.1f}   {row['defect_deg']:16.1f}")
+    moving = [row for row in rows if row["n_clean"] >= 3]
+    if len(moving) >= 2:
+        spread = max(r["children_deg"] for r in moving) - min(r["children_deg"] for r in moving)
+        print(f"  the daughter-daughter median moves {spread:.1f} deg across the sweep. Read the "
+              f"offset off the plateau, not off the reference value")
 
 
 def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors_list):
@@ -1812,7 +2179,7 @@ def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors
                          "r2_l": None, "order_min": None, "order_max": None})
             continue
         elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                                args.fit_min_voxels * voxel_size)
+                                                args.fit_min_voxels * voxel_size, args.prespecified)
         fits = ratios[args.count]["fits"]
         orders = ratios[args.count]["orders"]
         rows.append({
@@ -1901,6 +2268,11 @@ def main():
                         help="Orders the ratios are fitted over. Fix this before looking at the "
                              "results. Default: every order whose mean diameter clears "
                              "--fit-min-voxels")
+    parser.add_argument("--prespecified", action="store_true",
+                        help="Declare that the fit range was fixed BEFORE the per-order table was "
+                             "looked at. Only you know that -- the same --fit-orders is typed "
+                             "either way -- so the program will not infer it. Sets prespecified=1 "
+                             "in --ratios-csv; without it the range is recorded as undeclared")
     parser.add_argument("--fit-min-voxels", type=float, default=3.0,
                         help="An order whose mean diameter is under this many voxels is left out of "
                              "the fit: under three voxels of diameter the distance transform is "
@@ -1920,6 +2292,27 @@ def main():
     parser.add_argument("--breakpoint-radius", type=float, default=None,
                         help="...provided its tip is wider than this (mm), i.e. it cannot just be "
                              "the tree fading out. Default: 2 voxels")
+    parser.add_argument("--reconnect-severed", action="store_true",
+                        help="Take back from the other class the voxels that reconnect every "
+                             "severed fragment to the trunk, then re-run the whole morphometry on "
+                             "the repaired mask and print the ratios before and after. Needs "
+                             "--compare-label or --compare-mask, since severed is defined against "
+                             "the other class")
+    parser.add_argument("--repaired-mask", help="Where to write the mask --reconnect-severed "
+                                                "produced, on the working grid")
+    parser.add_argument("--reconnect-max-mm", type=float, default=20.0,
+                        help="Longest union path that still counts as a mislabelled crossing. "
+                             "Beyond it the route is a detour down the other tree and the fragment "
+                             "is left alone. Default: 20")
+    parser.add_argument("--angle-offset", type=float, default=DIRECTION_OFFSET,
+                        help="Distance from a junction at which the branch direction fit starts, "
+                             "in multiples of the local junction radius. Inside that ball the "
+                             "centerline still bends out of the parent, and fitting from 0 inflates "
+                             f"every angle. Default: {DIRECTION_OFFSET}")
+    parser.add_argument("--angle-sweep", type=float, nargs="+", default=None, metavar="OFFSET",
+                        help="Re-measure the junction angles at these direction-fit offsets and "
+                             "tabulate them against the count of measurable junctions, "
+                             "e.g. --angle-sweep 0 0.5 1 1.5 2 2.5")
     parser.add_argument("--murray-min-voxels", type=float, default=3.0,
                         help="Murray's exponent and the area ratio are only summarized over the "
                              "bifurcations whose parent and daughters are wider than this many "
@@ -1996,19 +2389,8 @@ def main():
             print(f"resampled to {np.round(work_spacing, 3).tolist()} mm, shape={work_mask.shape}")
     args.factors = factors
 
-    # the EDT stops at the last inside voxel centre, so the wall sits about
-    # half a voxel further out
-    radius_map = distance_transform_edt(work_mask, sampling=work_spacing) + 0.5 * work_spacing.min()
-    skeleton = skeletonize(work_mask) > 0  # older skimage returns 0/255 uint8 in 3D
-    print(f"skeleton: {int(skeleton.sum())} voxels")
-
-    base_graph, positions = build_voxel_graph(skeleton, work_spacing)
-    contract_junction_clusters(base_graph, positions, work_mask)
-    update_edge_weights(base_graph, positions, work_spacing)
-    radii = radius_map[tuple(np.rint(positions).astype(int).T)]
-
-    voxel_size = float(work_spacing.min())
-    world = positions @ work_affine[:3, :3].T + work_affine[:3, 3]
+    radius_map, skeleton, base_graph, positions, radii, voxel_size, world = skeletonize_graph(
+        work_mask, work_affine, work_spacing)
 
     compare_distance = compare_inside = compare_union = compare_name = None
     if compare_path:
@@ -2048,7 +2430,7 @@ def main():
         print("diameter-defined Strahler did not converge; the last iteration is reported")
 
     elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                            args.fit_min_voxels * voxel_size)
+                                            args.fit_min_voxels * voxel_size, args.prespecified)
     summary = summaries[args.count]
     bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size)
 
@@ -2068,6 +2450,10 @@ def main():
     # the ratios are the point of the run, so they survive --no-report
     for counting in ("segment", "element"):
         print_ratios(ratios[counting], args.ordering, counting)
+
+    if args.angle_sweep:
+        print_angle_sweep(sweep_angle_offset(graph, table, smooth, radii, voxel_size, "order",
+                                             args.murray_min_voxels * voxel_size, args.angle_sweep))
 
     sweep = None
     if args.sweep_k:
@@ -2089,6 +2475,32 @@ def main():
                               args.ordering)
     print_quality(metrics, breakpoints)
     print_orphans(orphans, args.orphan_gap, compare_name, args.dust_length)
+
+    if args.reconnect_severed:
+        if compare_union is None:
+            raise SystemExit("--reconnect-severed needs a second class to take the pedicles back "
+                             "from: pass --compare-label or --compare-mask")
+        repaired, reclaimed = reclaim_pedicles(work_mask, other, orphans, positions, radii,
+                                               work_spacing, args.reconnect_max_mm)
+        print_reclaim(reclaimed, work_spacing)
+        if any(row["repair"] == "reclaimed" for row in reclaimed):
+            print(f"repaired mask volume: {int(repaired.sum())} voxels "
+                  f"({repaired.sum() * np.prod(work_spacing) / 1000.0:.2f} mL on the working grid, "
+                  f"was {work_mask.sum() * np.prod(work_spacing) / 1000.0:.2f} mL)")
+            fixed = skeletonize_graph(repaired, work_affine, work_spacing)
+            fixed_result = build_tree(fixed[2], fixed[3], fixed[4], fixed[6], fixed[5], args,
+                                      args.radius_factor)
+            if fixed_result is None:
+                print("  nothing survived pruning on the repaired mask, ratios unchanged")
+            else:
+                _, _, fixed_ratios = summarize(fixed_result, args.ordering, args.fit_orders,
+                                               args.fit_min_voxels * voxel_size, args.prespecified)
+                for counting in ("segment", "element"):
+                    compare_ratios(ratios[counting], fixed_ratios[counting], args.ordering, counting)
+                if args.repaired_mask:
+                    nib.save(nib.Nifti1Image(repaired.astype(np.uint8), work_affine),
+                             args.repaired_mask)
+                    print(f"wrote {args.repaired_mask}")
 
     bridge = None
     if args.bridge_sweep is not None:
