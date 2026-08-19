@@ -2166,22 +2166,92 @@ def reclaim_pedicles(work_mask, other, orphans, spacing):
     reclaimed = np.zeros_like(work_mask)
     rows = []
     for row in severed:
-        path = row["path"]
-        cap = float(row["median_radius_mm"])
-        # the tube is opened in a box around the path, so the EDT stays cheap
-        pad = np.ceil(cap / spacing).astype(int) + 1
-        low = np.maximum(path.min(axis=0) - pad, 0)
-        high = np.minimum(path.max(axis=0) + pad + 1, work_mask.shape)
-        box = tuple(slice(a, b) for a, b in zip(low, high))
-        seed = np.ones(tuple(high - low), dtype=bool)
-        seed[tuple((path - low).T)] = False
-        tube = (distance_transform_edt(seed, sampling=spacing) <= cap) & union[box]
-        gained = tube & ~work_mask[box]
+        box, gained = paint_pedicle(row["path"], float(row["median_radius_mm"]),
+                                    union, work_mask, spacing)
         reclaimed[box] |= gained
         rows.append(dict(row, repair="reclaimed",
                          reclaimed_ml=float(gained.sum() * np.prod(spacing) / 1000.0)))
 
     return work_mask | reclaimed, reclaimed, rows
+
+
+def paint_pedicle(path, cap, union, work_mask, spacing):
+    """
+    Opens the tube around one path, and returns (box, voxels gained in it).
+
+    The tube is capped at `cap`, the fragment's own radius, and intersected
+    with the union, so the repair can neither be wider than the artery it
+    restores nor contain a voxel that was not already segmented as vessel.
+    It is painted in a bounding box so the EDT stays cheap.
+    """
+    pad = np.ceil(cap / spacing).astype(int) + 1
+    low = np.maximum(path.min(axis=0) - pad, 0)
+    high = np.minimum(path.max(axis=0) + pad + 1, work_mask.shape)
+    box = tuple(slice(a, b) for a, b in zip(low, high))
+    seed = np.ones(tuple(high - low), dtype=bool)
+    seed[tuple((path - low).T)] = False
+    tube = (distance_transform_edt(seed, sampling=spacing) <= cap) & union[box]
+    return box, tube & ~work_mask[box]
+
+
+def sweep_detour(orphans, work_mask, other, spacing, thresholds, dust_length,
+                 max_calibre_ratio, max_elbow_deg):
+    """
+    What each detour threshold buys and what it costs, in one pass.
+
+    The threshold is the only free parameter of the repair, and picking it by
+    eye on a list of fragments is how a knob gets tuned to a result. The
+    trade is not obvious either: a fragment reached by a long way round is
+    reattached by a long tube, so the volume taken from the other class and
+    the length of fabricated centerline both grow faster than the orphan
+    length recovered. `mL per mm` is the column that says so -- it is flat
+    while the paths are crossings and climbs once they are detours, and the
+    threshold to keep is the last one before it climbs.
+
+    Each fragment's tube is painted once; the thresholds only change which
+    ones are summed, so the whole table costs one pass over the candidates.
+    """
+    union = work_mask | other
+    priced = []
+    for row in orphans:
+        if row.get("path") is None or row["length_mm"] < dust_length:
+            continue  # same precedence as classify_orphans: size first
+        if severed_verdict(row, float("inf"), max_calibre_ratio, max_elbow_deg):
+            continue  # fails on calibre or elbow, no threshold brings it back
+        _, gained = paint_pedicle(row["path"], float(row["median_radius_mm"]),
+                                  union, work_mask, spacing)
+        priced.append((row["detour"], row["length_mm"],
+                       float(gained.sum() * np.prod(spacing) / 1000.0)))
+
+    missing = sum(row["length_mm"] for row in orphans)
+    rows = []
+    for threshold in thresholds:
+        kept = [entry for entry in priced if entry[0] <= threshold]
+        length = sum(entry[1] for entry in kept)
+        volume = sum(entry[2] for entry in kept)
+        rows.append({"detour": float(threshold), "n": len(kept), "length_mm": length,
+                     "reclaimed_ml": volume,
+                     "share": length / missing if missing > 0 else 0.0,
+                     "ml_per_mm": volume / length if length > 0 else float("nan")})
+    return rows
+
+
+def print_detour_sweep(rows):
+    """Prints the detour sweep, cost column last because it is the deciding one."""
+    print("\n=== severed fragments vs the detour threshold ===")
+    print("  detour   n   recovered_mm   share_of_missing   reclaimed_mL   mL per mm")
+    for row in rows:
+        print(f"  {row['detour']:6.2f} {row['n']:3d} {row['length_mm']:14.1f} "
+              f"{row['share']:18.1%} {row['reclaimed_ml']:14.2f} {row['ml_per_mm']:11.4f}")
+    usable = [row for row in rows if row["n"] > 0]
+    if len(usable) >= 2:
+        best = min(usable, key=lambda row: row["ml_per_mm"])
+        print(f"  cheapest reconnection per millimetre at detour {best['detour']:.2f} "
+              f"({best['ml_per_mm']:.4f} mL/mm, {best['n']} fragment(s), "
+              f"{best['share']:.1%} of the missing length)")
+        print("  a rising mL/mm means the extra fragments are being reached by long tortuous "
+              "tubes, not by crossings: past that point the repair is fabricating more geometry "
+              "than it recovers")
 
 
 def print_reclaim(rows, orphans, spacing, show=8):
@@ -2540,11 +2610,15 @@ def main():
     parser.add_argument("--reconnect-csv", help="One row per severed fragment: whether it was "
                                                 "reclaimed or refused, the union path length, the "
                                                 "volume taken back and where to look")
-    parser.add_argument("--severed-max-detour", type=float, default=3.0, metavar="RATIO",
+    parser.add_argument("--severed-max-detour", type=float, default=2.0, metavar="RATIO",
                         help="Longest union path, as a multiple of the direct axis-to-axis gap, "
                              "that still counts as a mislabelled crossing. Existence of a path "
                              "proves nothing -- the other tree is connected -- so this is what "
-                             "separates severed from hole. Default: 3")
+                             "separates severed from hole. Use --severed-sweep to see what each "
+                             "value buys and costs before moving it. Default: 2")
+    parser.add_argument("--severed-sweep", type=float, nargs="+", default=None, metavar="RATIO",
+                        help="Tabulate recovered length, reclaimed volume and mL per mm against "
+                             "the detour threshold, e.g. --severed-sweep 1 1.5 2 2.5 3 4")
     parser.add_argument("--severed-max-calibre", type=float, default=2.0, metavar="RATIO",
                         help="Widest vessel the path may run through in the other class, as a "
                              "multiple of the fragment's own radius. Beyond it the route is going "
@@ -2729,6 +2803,14 @@ def main():
                               args.ordering)
     print_quality(metrics, breakpoints)
     print_orphans(orphans, args.orphan_gap, compare_name, args.dust_length)
+
+    if args.severed_sweep:
+        if compare_union is None:
+            raise SystemExit("--severed-sweep needs a second class: pass --compare-label "
+                             "or --compare-mask")
+        print_detour_sweep(sweep_detour(orphans, work_mask, other, work_spacing,
+                                        args.severed_sweep, args.dust_length,
+                                        args.severed_max_calibre, args.severed_max_elbow))
 
     if args.reconnect_severed:
         if compare_union is None:
