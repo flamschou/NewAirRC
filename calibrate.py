@@ -106,6 +106,33 @@ def run_case(rd, rl, spacing, args, workdir):
     return {row["ratio"]: row for row in rows}, usable
 
 
+def keep_consistent(rows):
+    """
+    Keeps only the cases whose fit rests on the same number of orders.
+
+    A curve is read point against point, so its points have to be the same
+    kind of measurement. A fit on four orders and a fit on five differ by
+    more than precision -- the four-order one is missing the thin end, which
+    is where the slope is anchored -- and mixing them puts a step in the
+    curve that has nothing to do with the ratio.
+
+    What matters is that the kept cases agree with EACH OTHER, not that they
+    agree with what the phantom predicted would resolve. Requiring the
+    latter is too strict: adding realistic scatter shifts every case down by
+    one order at once, which leaves the curve perfectly usable and internally
+    consistent while failing a comparison against the noiseless prediction.
+    So the modal count wins, and the minority is dropped.
+    """
+    counts = [row["n_orders"] for row in rows if row["reliable"]]
+    if not counts:
+        return
+    modal = max(set(counts), key=counts.count)
+    for row in rows:
+        if row["reliable"] and row["n_orders"] != modal:
+            row["reliable"] = False
+            row["dropped_for"] = f"{row['n_orders']} orders against {modal} for the arm"
+
+
 def relative(value, truth):
     """Relative bias, or None when either side is missing."""
     if value in (None, "") or truth <= 0:
@@ -243,17 +270,18 @@ def main():
                     "order_max": int(row["order_max"]) if row and row["order_max"] else None,
                     "n_orders": int(row["n_orders"]) if row and row["n_orders"] else 0,
                     "orders_expected": len(usable),
-                    # a case is only comparable to its neighbours if the chain
-                    # reached the same orders it reached for them. Losing one
-                    # is not a small loss of power: on a five-point fit it is
-                    # the single thing that predicts a bad recovery here
-                    "reliable": bool(row and row["r2"] and float(row["r2"]) >= args.min_r2
-                                     and int(row["n_orders"]) >= len(usable)),
+                    # R2 gates the individual fit; the order count is settled
+                    # afterwards, across the arm (see `keep_consistent`)
+                    "reliable": bool(row and row["r2"] and float(row["r2"]) >= args.min_r2),
+                    "dropped_for": "",
                 })
             print(f"  spacing {spacing:.2f} mm, {arm} arm, R_d {rd:.2f} R_l {rl:.2f}: "
                   f"orders {usable} -> {arm}={results[-1]['recovered']}")
 
     for name in RATIOS:
+        for spacing in args.spacing:
+            keep_consistent([r for r in results
+                             if r["ratio"] == name and r["spacing_mm"] == spacing])
         print(f"\n=== {name}: imposed vs recovered ===")
         print("  spacing   imposed   recovered   relative bias   95% CI on the bias      R2   orders")
         for row in [r for r in results if r["ratio"] == name]:
@@ -266,8 +294,7 @@ def main():
             elif row["r2"] < args.min_r2:
                 flag = f"   <- R2 under {args.min_r2}, kept out of the curve"
             else:
-                flag = (f"   <- fitted {row['n_orders']} of {row['orders_expected']} orders, "
-                        f"kept out of the curve")
+                flag = f"   <- {row.get('dropped_for', 'inconsistent')}, kept out of the curve"
             print(f"  {row['spacing_mm']:7.2f} {row['imposed']:9.3f} {row['recovered']:11.3f} "
                   f"{row['bias']:+15.1%}   [{row['bias_low']:+6.1%}, {row['bias_high']:+6.1%}] "
                   f"{row['r2']:7.3f}   {row['order_min']}..{row['order_max']}{flag}")
@@ -311,7 +338,8 @@ def main():
     if args.out:
         columns = ("ratio", "spacing_mm", "imposed", "held_rd", "held_rl", "recovered",
                    "ci_low", "ci_high", "r2", "bias", "bias_low", "bias_high",
-                   "order_min", "order_max", "n_orders", "orders_expected", "reliable")
+                   "order_min", "order_max", "n_orders", "orders_expected", "reliable",
+                   "dropped_for")
         with open(args.out, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
             writer.writeheader()
