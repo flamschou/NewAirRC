@@ -1095,13 +1095,30 @@ def print_ratios(result, ordering, counting):
               f"Use --ordering strahler_dd before interpreting any of them")
 
 
-def ratio_rows(result, ordering, counting):
-    """The ratio table as flat dicts, one per ratio, for --ratios-csv."""
+def ratio_rows(result, ordering, counting, spacing=None, floor_mm=None, subject=None):
+    """
+    The ratio table as flat dicts, one per ratio, for --ratios-csv.
+
+    The acquisition travels with the number. A cohort assembled from these
+    files has a fit range that moves from subject to subject -- by design,
+    since the floor is mechanical and lands on a different order at every
+    spacing -- so a reader given the ratios alone cannot tell a difference in
+    anatomy from a difference in resolution. The spacing, the anisotropy, the
+    floor that was applied and the orders it left are therefore columns, not
+    something to be reconstructed from a log.
+    """
     orders = result["orders"]
+    spacing = None if spacing is None else np.asarray(spacing, float)
     out = []
     for name, _, _ in RATIO_KEYS:
         fit = result["fits"][name]
         out.append({
+            "subject": subject or "",
+            "spacing_x_mm": None if spacing is None else float(spacing[0]),
+            "spacing_y_mm": None if spacing is None else float(spacing[1]),
+            "spacing_z_mm": None if spacing is None else float(spacing[2]),
+            "anisotropy": None if spacing is None else float(spacing.max() / spacing.min()),
+            "fit_floor_mm": floor_mm,
             "ratio": name, "ordering": ordering, "counting": counting,
             "value": fit["ratio"] if fit else None,
             "ci_low": fit["ratio_low"] if fit else None,
@@ -1114,6 +1131,41 @@ def ratio_rows(result, ordering, counting):
             "prespecified": int(result["prespecified"]),
         })
     return out
+
+
+def fit_floor(spacing, min_voxels, override_mm=None):
+    """
+    Smallest mean diameter an order may have and still enter the fit, in mm.
+
+    Three voxels OF THE COARSE AXIS of the acquired grid. Under that the
+    distance transform has no dynamic range left to report -- but which voxel
+    counts is not a detail. The chain resamples to the finest axis before it
+    measures anything, and a floor counted there is the anisotropy ratio too
+    permissive: upsampling adds samples, not information, and a vessel two
+    slices across does not become resolved by being interpolated onto four.
+    The order that slips in is censored from below, sits at the smallest
+    radius the transform can return, and anchors the steep end of every
+    slope. Measured on the phantom at 1.19/0.80/1.31 mm it moved R_d by 5.6%.
+
+    Counting on the coarse axis is the same rule on every grid rather than a
+    correction applied to some: on an isotropic input the three axes agree
+    and this is the criterion it has always used. Fixing the ratio instead --
+    hard-coding the 4.93 working voxels that one anisotropy happens to need
+    -- would cut too high on a rounder volume and too low on a flatter one,
+    which across a cohort is the same trap the other way round.
+
+    Returns (floor in mm, one line saying how it was arrived at).
+    """
+    spacing = np.asarray(spacing, float)
+    coarse, fine = float(spacing.max()), float(spacing.min())
+    if override_mm is not None:
+        return float(override_mm), f"{override_mm:.2f} mm, given as --fit-min-diameter"
+    floor = min_voxels * coarse
+    if coarse <= 1.05 * fine:
+        return floor, f"{floor:.2f} mm = {min_voxels:g} x {coarse:.3f} mm, an isotropic grid"
+    return floor, (f"{floor:.2f} mm = {min_voxels:g} x {coarse:.3f} mm, the coarse axis of a "
+                   f"{coarse / fine:.2f}:1 acquisition (counting it on the {fine:.3f} mm the mask "
+                   f"is resampled to would have allowed {min_voxels * fine:.2f} mm)")
 
 
 def resolution_floor(voxel_size):
@@ -1891,8 +1943,9 @@ ELEMENT_COLUMNS = ("element_id", "order", "n_segments", "length_mm", "chord_mm",
                    "calibre_mm", "mean_radius_mm", "proximal_calibre_mm", "distal_calibre_mm",
                    "tip_radius_mm", "is_terminal", "synthetic_fraction")
 
-RATIO_COLUMNS = ("ratio", "ordering", "counting", "value", "ci_low", "ci_high", "r2", "slope",
-                 "n_orders", "order_min", "order_max", "prespecified")
+RATIO_COLUMNS = ("subject", "spacing_x_mm", "spacing_y_mm", "spacing_z_mm", "anisotropy",
+                 "fit_floor_mm", "ratio", "ordering", "counting", "value", "ci_low", "ci_high",
+                 "r2", "slope", "n_orders", "order_min", "order_max", "prespecified")
 
 RECLAIM_COLUMNS = ("component_id", "repair", "length_mm", "median_radius_mm", "max_radius_mm",
                    "gap_wall_mm", "gap_axis_mm", "path_mm", "detour", "path_calibre_mm",
@@ -2523,7 +2576,7 @@ def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors
                         for counting in ("segment", "element"))
             continue
         elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                                args.fit_min_voxels * voxel_size, args.prespecified)
+                                                args.fit_floor_mm, args.prespecified)
         for counting in ("segment", "element"):
             fits = ratios[counting]["fits"]
             orders = ratios[counting]["orders"]
@@ -2657,14 +2710,33 @@ def main():
                              "results. Default: every order whose mean diameter clears "
                              "--fit-min-voxels")
     parser.add_argument("--prespecified", action="store_true",
-                        help="Declare that the fit range was fixed BEFORE the per-order table was "
-                             "looked at. Only you know that -- the same --fit-orders is typed "
-                             "either way -- so the program will not infer it. Sets prespecified=1 "
-                             "in --ratios-csv; without it the range is recorded as undeclared")
+                        help="Declare that the RULE fixing the fit range was chosen BEFORE the "
+                             "per-order table was looked at. The rule is what can be pre-specified, "
+                             "not the range: the diameter floor is mechanical, but it lands on a "
+                             "different order for every spacing, so across a cohort the range moves "
+                             "from subject to subject by design. Report it that way. Only you know "
+                             "whether the rule came first -- the same --fit-orders is typed either "
+                             "way -- so the program will not infer it. Sets prespecified=1 in "
+                             "--ratios-csv; without it the range is recorded as undeclared")
     parser.add_argument("--fit-min-voxels", type=float, default=3.0,
                         help="An order whose mean diameter is under this many voxels is left out of "
                              "the fit: under three voxels of diameter the distance transform is "
-                             "quantized to the grid and has no dynamic range left. Default: 3")
+                             "quantized to the grid and has no dynamic range left. Counted on the "
+                             "COARSE axis of the acquired grid, which is the axis that decides "
+                             "whether an order was resolved -- counting it on the resampled grid "
+                             "would be the anisotropy ratio too permissive, and would admit an "
+                             "order the acquisition never saw. Identical on an isotropic input, "
+                             "where the three axes agree. Default: 3")
+    parser.add_argument("--subject", default=None,
+                        help="Identifier written into --ratios-csv, so the per-subject files of a "
+                             "cohort concatenate into a table that can be read. Defaults to the "
+                             "input filename")
+    parser.add_argument("--fit-min-diameter", type=float, default=None, metavar="MM",
+                        help="Diameter floor of the fit in millimetres, overriding the rule above "
+                             "outright. Use it to hold a cohort to one floor when the volumes were "
+                             "acquired at different spacings -- at the cost of the subjects whose "
+                             "grid cannot support it, which then have to be dropped rather than "
+                             "quietly fitted below their own resolution")
     parser.add_argument("--sweep-k", type=float, nargs="+", default=None, metavar="K",
                         help="Re-run the analysis for each of these --radius-factor values and "
                              "tabulate the ratios against them, e.g. --sweep-k 0.5 1 1.5 2 2.5 3")
@@ -2799,6 +2871,13 @@ def main():
         work_mask, work_affine, factors, work_spacing = resample_isotropic(mask, affine, spacing, args.spacing)
         if not np.allclose(factors, 1.0):
             print(f"resampled to {np.round(work_spacing, 3).tolist()} mm, shape={work_mask.shape}")
+    # The floor of the fit is counted on the ACQUIRED grid, once, here, and
+    # every later use reads it off args rather than recomputing it from a
+    # voxel size that by then means the resampled one (see `fit_floor`).
+    args.fit_floor_mm, floor_rule = fit_floor(spacing, args.fit_min_voxels, args.fit_min_diameter)
+    print(f"acquired grid: {np.round(spacing, 3).tolist()} mm, "
+          f"{spacing.max() / spacing.min():.2f}:1 anisotropy; diameter floor of the fit "
+          f"{floor_rule}")
     args.factors = factors
 
     radius_map, skeleton, base_graph, positions, radii, voxel_size, world = skeletonize_graph(
@@ -2842,7 +2921,7 @@ def main():
         print("diameter-defined Strahler did not converge; the last iteration is reported")
 
     elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                            args.fit_min_voxels * voxel_size, args.prespecified)
+                                            args.fit_floor_mm, args.prespecified)
     summary = summaries[args.count]
     bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size,
                                         positions, factors)
@@ -2925,7 +3004,7 @@ def main():
             else:
                 fixed_elements, _, fixed_ratios = summarize(
                     fixed_result, args.ordering, args.fit_orders,
-                    args.fit_min_voxels * voxel_size, args.prespecified, args.max_synthetic)
+                    args.fit_floor_mm, args.prespecified, args.max_synthetic)
                 print_synthetic(synthetic_share(fixed_result["table"]))
                 fixed_bifurcations = analyze_bifurcations(
                     fixed_result["table"], "order", args.murray_min_voxels * voxel_size,
@@ -2979,7 +3058,9 @@ def main():
         print(f"wrote {args.orders_csv}")
     if args.ratios_csv:
         rows = [row for counting in ("segment", "element")
-                for row in ratio_rows(ratios[counting], args.ordering, counting)]
+                for row in ratio_rows(ratios[counting], args.ordering, counting,
+                                      spacing, args.fit_floor_mm,
+                                      args.subject or os.path.basename(args.input))]
         write_table_csv(args.ratios_csv, rows, RATIO_COLUMNS)
         print(f"wrote {args.ratios_csv}")
     if args.bifurcations_csv:

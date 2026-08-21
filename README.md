@@ -547,6 +547,17 @@ every order whose mean diameter clears `--fit-min-voxels` (3 voxels, where
 the distance transform stops having any dynamic range) and the output says
 so.
 
+Those three voxels are counted **on the coarse axis of the acquired grid**,
+not on the isotropic grid the mask is resampled onto. Upsampling adds samples,
+not information: a vessel two slices across does not become resolved by being
+interpolated onto four, and a floor counted after resampling is the anisotropy
+ratio too permissive. The order it lets in is censored from below — its
+diameter is the grid, not the vessel — and it anchors the steep end of every
+slope. On a 1.19/0.80/1.31 mm acquisition that single admitted order moves
+R_d by 5.6 %. On an isotropic input the three axes agree and the criterion is
+the one it has always been. `--fit-min-diameter` overrides the rule in
+millimetres outright.
+
 ### Pruning sensitivity
 
 Pruning is the one free parameter no measurement constrains, and it acts on
@@ -565,11 +576,11 @@ the sweep are a result; ratios that move are a measurement of the pruning.
 
 ### Calibrating the chain
 
-`phantom.py` builds a symmetric binary tree with R_b = 2 exactly and R_d,
-R_l imposed, rasterizes it as anti-aliased capsules at a chosen voxel size,
-blurs it and adds noise. Running the whole chain on it gives the bias of the
-chain alone, which is the only way to tell "the segmentation misses small
-vessels" from "the measuring chain compresses the dynamic range".
+`phantom.py` builds a binary tree whose ratios are known, rasterizes it as
+anti-aliased capsules at a chosen voxel size, blurs it and adds noise.
+Running the whole chain on it gives the bias of the chain alone, which is the
+only way to tell "the segmentation misses small vessels" from "the measuring
+chain compresses the dynamic range".
 
 ```bash
 python phantom.py --orders 7 --spacing 1.0 --rd 1.5 --rl 1.4 \
@@ -579,16 +590,251 @@ python centerline.py --input tree.nii.gz --ordering strahler_dd \
 ```
 
 `phantom.py` prints the exact answers, including the Murray exponent
-(`ln 2 / ln R_d`, closed-form because every bifurcation is symmetric), and
-which orders fall under three voxels of diameter and therefore cannot be
-measured at that spacing at all. Re-run it at the voxel size of the study
-before quoting anything.
+(`ln 2 / ln R_d`, closed-form at the symmetric junctions), and which orders
+fall under three voxels of diameter and therefore cannot be measured at that
+spacing at all. Re-run it at the voxel size of the study before quoting
+anything.
 
 At 1.0 mm isotropic with a two-thirds-voxel blur, the chain returns
 R_b = 2.07, R_d = 1.457 and R_l = 1.364 on elements against a truth of
 2.000 / 1.500 / 1.400 — the diameter ratio comes back ~3% low because the
 inscribed radius is overestimated more on thin vessels than on thick ones,
 and the finest order is lost to the blur entirely.
+
+Three things decide whether a calibration run describes the study or a
+different experiment.
+
+**Give the acquired voxel, not the resampled one.** `--spacing` takes three
+values as readily as one. The chain upsamples an anisotropic acquisition to
+its finest axis, and an isotropic phantom rasterized at that finest axis has
+information the study never had: its boundary is known to 0.8 mm in all three
+directions where the study's is known to 0.8 mm along one axis and to the
+slice thickness along the others. Same working grid, different information —
+and it is the difference that leaves a measured R_d in a range instead of at
+a value.
+
+```bash
+python phantom.py --spacing 1.25 0.799 1.25 --orders 7 --output tree.nii.gz
+```
+
+The point spread function follows the grid: `--blur` defaults to two thirds
+of the voxel *along each axis*, because a thick slice is integrated over its
+thickness and not merely sampled coarsely. The diameter floor of the fit
+follows it too, on both sides of the comparison: `calibrate.py` hands
+`centerline.py` a plain voxel count and `centerline.py` applies it to the
+coarse axis of whatever it was given, so the phantom and the real data are
+floored by one rule with one implementation. Fixing a ratio instead — passing
+the 4.93 working voxels that one anisotropy happens to need — would cut too
+high on a rounder volume and too low on a flatter one, which across a cohort
+is the same trap the other way round.
+
+**A symmetric phantom cannot calibrate R_b.** It has R_b = 2 by
+construction, the theoretical floor, while what is worth measuring in a real
+tree is the excess above it. `--side-branches` imposes that excess: an
+element of order n then carries side branches of order n − `--side-drop`
+along its length, which is the monopodial pattern of a lung. Strahler is
+unharmed — the two children of such a joint have different orders, so the
+element stays order n end to end — and the counts follow
+`N_n = 2 N_{n+1} + s N_{n+k}`, so R_b is the root of `x^k = 2x^(k-1) + s`:
+2.414 for one side branch two orders down, 2.732 for two, 3.000 for one
+order down. R_d and R_l are untouched, being functions of the order alone.
+
+The truth quoted against a measurement is the *fitted* R_b, not that
+asymptote: a finite tree counts 1, 2, 4 elements at the top whatever its
+rule, and over seven orders the fit lands near 2.35 where the asymptote is
+2.414. Both sides are fitted by the same estimator over the same orders, so
+what is left between them is the chain. `phantom.py` prints both.
+
+**One phantom cannot settle whether a bias is real.** The interval
+`centerline.py` reports is the confidence interval of a regression through
+five or six orders. It is 4 to 5 % wide however many times the case is run —
+wider than the bias being measured — so a single case can only ever say the
+bias is not distinguishable from zero. `calibrate.py --repeats` runs each
+case again under a fresh draw and reports the interval on the *mean bias*,
+which narrows as 1/√n and is the right uncertainty for a systematic effect.
+Run it with `--jitter` as well, or the repeats vary the noise, hold the tree
+fixed, and come out too narrow.
+
+With `--jitter` the comparison has to be **paired**: the imposed tree is
+redrawn every repeat and its own fitted ratio moves with it — unbiased over
+ten draws, but about a percent off on any one, since its per-order means rest
+on 16, 8, 4, 2, 1 segments. Dividing a mean over ten chain runs by the truth
+of one of the ten reports that draw's offset as a bias of the chain, and
+reports the *same* offset at every point of an arm, because every case is
+jittered from the same seed sequence — which dresses a single unlucky tree up
+as a consistent trend. Each repeat is therefore compared with the tree it was
+run on, which also takes the tree-to-tree variance out of the interval.
+
+`--pin-smallest` holds the bottom of the tree at a fixed number of voxels of
+the **coarse** axis, so every case in a sweep offers the chain the same
+measurable span. The trunk is pinned with it, but against the R_l the arm
+holds *fixed*, never against the R_l being swept: both ends of a geometric
+series cannot be held while its ratio varies, and pinning the small end walks
+the trunk from L/D 0.8 at R_l 1.15 to 4.6 at 1.80 — the stubby end is a disc
+its daughters weld into, and the fit on it measures the weld.
+
+```bash
+python calibrate.py --spacing 1.25,0.799,1.25 --side-branches 0 1 2 3 \
+  --repeats 5 --jitter 0.1 --measured-rb 2.31 --out calibration.csv
+```
+
+**Nothing is kept out of the curve for being imprecise.** Both criteria that
+were once used for it are off by default.
+
+R² is the clearer error: it is the share of the variance a straight line
+explains, so an arm that sweeps its ratio towards 1 sweeps the variance to be
+explained towards zero with it, and a flat truth measured perfectly scores
+near zero. On the R_l arm the case imposed at 1.05 scores R² 0.57 and carries
+the tightest interval of the arm, while cases scoring 0.97 carry per-fit
+intervals of ±40 % and worse — so the R² floor removed the low end of that
+arm systematically, the end a measured R_l near 1.2 has to be bracketed by,
+and kept the loose end.
+
+The width of the per-case fit interval is scale-free where R² is not, and it
+fails a second objection. It describes how uncertain *one* realization's
+regression was, which is exactly what `--repeats` averages away; what remains
+after the repeats is the paired interval, the precision of the quantity being
+estimated. On the R_b arm at 30 repeats the case at 2.865 carries a paired
+interval 5.2 points wide against 5.2 for its neighbour at 3.080 and 5.6 for
+the one at 2.624, while their per-fit spreads read 38 %, 29 % and 24 %: a
+threshold on the spread separates cases the repeats have made
+indistinguishable.
+
+And excluding an imprecise point does not make the reading more precise. The
+band already carries every point's uncertainty through the envelope; dropping
+one only widens the gap the interpolation has to cross. Dropping 2.865 took
+the bracket around a measured R_b of 2.782 from 0.19 to 0.33 in recovered
+units and widened the band on the answer by a fifth.
+
+Wrongness is caught where it shows instead: `keep_consistent` for a fit
+resting on a different number of orders, and the inversion itself for a curve
+or an envelope that stops increasing. `--max-fit-spread` remains for a sweep
+run *without* repeats, where the per-case interval is the only precision
+there is; `--min-r2` for an arm whose slope is nowhere near zero.
+
+Each arm ends with what it supports, in the register it supports it in: a
+per-point correction, or a sign and an order of magnitude with the drift
+across the arm as the evidence, or nothing. The inversion answers with a
+band rather than a value — the inverse of a curve known to a few percent is
+an interval of imposed ratios, and quoting its centre turns that interval
+into a point value the phantom cannot support.
+
+Each sweep is written to `--out` and can be read again with `--from-csv`,
+which runs no phantom:
+
+```bash
+python calibrate.py --from-csv calibration.csv --measured-rd 1.432
+```
+
+Use it whenever the measured ratio is revised — after a fit range is
+corrected, say. Re-sweeping to read a new value would move the curve as well
+as the value, leaving nothing to attribute the difference to.
+
+`calibration.csv` in this repository is one such sweep, on a
+1.188/0.799/1.313 mm acquisition over five orders, the smallest pinned at 3.5
+coarse voxels, jitter 0.1, `--fit-min-voxels` counted on the coarse axis:
+
+| ratio | what the chain does to it |
+|---|---|
+| R_d | unbiased: +1.0 / −0.2 / +0.2 / +0.5 / +0.1 % over imposed 1.30→1.85, one point of five excluding zero |
+| R_l | +0.8 to +9.6 %, two points of five excluding zero |
+| R_b | compressed, and increasingly so with the asymmetry: −0.1 % at R_b 2.00, −2.2 % at 2.62, −5.6 % at 2.87, −6.1 % at 3.08, −12.2 % at 3.46 |
+
+R_b is the one that needs correcting, which is the reverse of what a
+symmetric phantom would have suggested — it cannot see the effect at all,
+since it sits at the point where the bias is zero. The mechanism is visible
+in the arm: side branches are the thinnest vessels in the tree, they are lost
+first, and what goes with them is exactly the excess of R_b over 2.
+
+Both isotropic controls disagree with the anisotropic grid on R_d, giving
+−2.3 to −4.7 %. At equal sampling *on the coarse axis*, the study's grid has
+a second axis 1.64× finer, and that is what keeps the thin end measurable. An
+isotropic phantom would have prescribed a 2 to 5 % correction that does not
+apply.
+
+### Running a cohort
+
+The floor is mechanical but it lands on a different order at every spacing,
+so a finer acquisition keeps more orders than a coarser one. That is the
+shape of the data rather than a defect of the method, and the one thing it
+requires is that it be declared: **the rule is pre-specified, the range is
+not.** `--prespecified` says the rule was fixed before the per-order table
+was visible; it does not say the range was the same for everyone, because it
+cannot be.
+
+So the acquisition travels with the number. `--ratios-csv` carries the
+spacing, the anisotropy, the floor applied and the orders it left, and
+`--subject` names the row:
+
+```bash
+python centerline.py --input sub-01.nii.gz --subject sub-01 \
+  --ordering strahler_dd --prespecified --ratios-csv results/sub-01_ratios.csv
+python cohort.py 'results/*_ratios.csv' --out cohort.csv
+```
+
+`cohort.py` assembles those files and runs the two checks that decide whether
+the subjects are comparable at all.
+
+**Is it one protocol?** The anisotropy should be near-constant across a
+cohort acquired the same way. A subject that departs from the cohort median
+was acquired differently, or has a header that misreports it; either way its
+floor is elsewhere, its fit rests on different orders of the same tree, and
+its ratios are not comparable to the rest.
+
+**Does every subject support a fit?** Three points still admit a regression,
+if barely. Two make the slope an arithmetic identity. A subject under the bar
+is dropped with its reason recorded, not fitted anyway.
+
+Both matter more than they look. Run on five phantoms built with the *same*
+imposed R_d of 1.500, the three sharing one protocol return 1.481, 1.495 and
+1.499 — within 1.2 % of each other — while a fourth on a near-isotropic grid
+keeps one order more and returns 1.453. Three percent apart, on identical
+trees. Without the columns a reader attributes that to anatomy.
+
+### Auditing the radius directly
+
+Every ratio rests on the distance transform, and the distance transform is
+the one measurement in the chain with no redundancy: a length is averaged
+over hundreds of points, a radius is one inscribed sphere in one place.
+`radius_audit.py` compares it to the imposed radius point by point and
+stratifies the error by the angle the vessel makes with z.
+
+```bash
+python radius_audit.py --spacing 1.188,0.799,1.313 --orders 7 \
+  --side-branches 1 --control --points-csv audit.csv
+```
+
+The reason to stratify by angle is that an anisotropic acquisition degrades
+a vessel by its orientation, not by its size: a radius is measured in the
+plane across the vessel, so one running along the fine axis has its
+cross-section sampled by the two coarse ones and is the worst case. The
+`cross-plane voxel` column is that sampling. Angle and calibre are
+confounded in any tree grown from a trunk, so the two-way table against the
+imposed order is the one to read, and the slope is fitted within order.
+Statistics are over segments, not points: hundreds of points along one
+vessel are one draw of what the grid did to that vessel.
+
+Two cuts are applied and both matter. Points within one local radius of a
+junction are dropped, where the inscribed sphere is the bifurcation cavity;
+and orders under three coarse voxels are excluded from every average,
+because there the transform returns its own floor — the same number for
+every such vessel — which pools in as the largest term in the result while
+being an artefact of where the tree was cut.
+
+Give all three axes even when two of them are close. The partial-volume
+ramp is now the voxel width along the wall normal, so two coarse axes that
+differ — 1.188 and 1.313 — do not resolve a vessel the same way, and the fit
+floor is set by the coarsest of the three alone.
+
+`--control` re-runs the same tree isotropic at the finest axis, held to the
+same orders, so the comparison is the anisotropy and not a different set of
+surviving vessels. On a 1.188/0.799/1.313 grid over seven orders, the radius
+bias on the resolved orders is +1.6 % [+0.0, +3.2] against +3.8 % [+2.1,
++5.4] for the isotropic control, and the within-order orientation slope
+covers zero (−16.5 % per mm of cross-plane voxel, [−33.5, +0.6]; 3.7 % of
+the radius between the best- and worst-oriented vessel of an order). At this
+spacing the anisotropy costs *orders* — the two finest are lost — not
+accuracy within an order.
 
 ### Measurement caveats
 
