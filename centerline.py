@@ -21,7 +21,12 @@ Pipeline:
        diameter-defined Strahler, see `compute_orders`
     8. group the segments into elements and fit R_b, R_d and R_l as the
        slopes of the semi-log plots of the count, diameter and length
-       against the order, with their confidence intervals
+       against the order, with their confidence intervals. Two floors
+       decide which orders enter that fit: --fit-min-voxels censors the
+       thin end, where the distance transform has no range left, and
+       --fit-min-branches the trunk end, where an order holds one element
+       and that element may be a chain spliced across the hilum rather
+       than a vessel -- see --element-flare, which names them
 
 Outputs:
     --output        nifti centerline mask, on the input grid. Defaults to
@@ -749,6 +754,46 @@ def diameter_defined_strahler(table, max_iterations=15):
     return converged
 
 
+def flare(entry):
+    """
+    The distal calibre over the proximal one, along a segment or an element.
+
+    Near 1 for a vessel: an artery tapers, gently, and it never widens by
+    much over its own length. Well above 1 only when the run of segments
+    grouped under one order is not one vessel -- a chain that keeps its
+    Strahler order across the hilum comes out as a single element several
+    times wider at its end than at its start, because it is four vessels
+    end to end and not one.
+
+    That is the direct symptom of a heterogeneous aggregation, and a more
+    specific one than tortuosity: a real vessel can wander around a
+    junction and still be a vessel, but it cannot triple its calibre.
+    """
+    head = entry.get("proximal_calibre_mm") or 0.0
+    if head <= 0:
+        return float("nan")
+    return float(entry["distal_calibre_mm"] / head)
+
+
+def flared(entry, limit):
+    """
+    Whether `entry` is an element that flares, and so is not one vessel.
+
+    The restriction to elements of two segments or more is what makes the
+    check specific rather than merely alarming. A one-segment element was
+    aggregated from nothing: whatever its two end calibres do, the answer
+    cannot be that the grouping put two vessels in one row. Left in, those
+    rows dominate the list -- on the LIDC example 46 of 52 hits are
+    single-segment order-1 twigs whose end calibres disagree for reasons
+    that have nothing to do with elements -- and the six that mean something
+    are lost in them.
+
+    The flare itself is still measured and written out for every element,
+    since it is a measurement; only the flag is narrowed.
+    """
+    return entry.get("n_segments", 1) >= 2 and flare(entry) > limit
+
+
 def build_elements(table, order_key, smooth):
     """
     Groups consecutive segments of the same order into elements.
@@ -795,7 +840,7 @@ def build_elements(table, order_key, smooth):
         chord = float(np.linalg.norm(smooth[nodes[-1]] - smooth[nodes[0]]))
         weights = np.array([member["length_mm"] for member in members])
         weights = weights / weights.sum() if weights.sum() > 0 else np.full(len(members), 1.0 / len(members))
-        elements.append({
+        element = {
             "element_id": len(elements),
             "n_segments": len(members),
             "branch_ids": [member["branch_id"] for member in members],
@@ -811,7 +856,9 @@ def build_elements(table, order_key, smooth):
             "is_terminal": members[-1]["is_terminal"],
             "nodes": nodes,
             "synthetic_fraction": float(np.dot(weights, [m["synthetic_fraction"] for m in members])),
-        })
+        }
+        element["flare"] = flare(element)
+        elements.append(element)
     return elements
 
 
@@ -905,14 +952,23 @@ def analyze_bifurcations(table, order_key, min_radius, positions=None, factors=N
     return bifurcations
 
 
-def order_summary(table, order_key):
-    """Aggregates the branch measurements order by order."""
+def order_summary(table, order_key, flare_limit=1.5):
+    """
+    Aggregates the branch measurements order by order.
+
+    `flare_limit` only decides what gets counted in `n_flared`; it changes
+    no mean. An order whose elements flare is one whose mean diameter is a
+    summary of things that are not each a vessel, and that is worth having
+    in the per-order table next to the mean it explains.
+    """
     rows = []
     for order in sorted({b[order_key] for b in table}):
         branches = [b for b in table if b[order_key] == order]
         terminal = [b for b in branches if b["is_terminal"]]
         lengths = np.array([b["length_mm"] for b in branches])
         calibres = np.array([b["calibre_mm"] for b in branches])
+        flares = [f for f in (flare(b) for b in branches) if np.isfinite(f)]
+        chains = sum(1 for b in branches if flared(b, flare_limit))
         rows.append({
             "order": order,
             "n_branches": len(branches),
@@ -926,6 +982,8 @@ def order_summary(table, order_key):
             "mean_proximal_calibre_mm": float(np.mean([b["proximal_calibre_mm"] for b in branches])),
             "mean_distal_calibre_mm": float(np.mean([b["distal_calibre_mm"] for b in branches])),
             "mean_tortuosity": float(np.mean([b["tortuosity"] for b in branches])),
+            "max_flare": float(max(flares)) if flares else None,
+            "n_flared": chains,
             "mean_tip_radius_mm": float(np.mean([b["tip_radius_mm"] for b in terminal])) if terminal else None,
         })
     return rows
@@ -971,7 +1029,8 @@ def semilog_fit(orders, values):
 RATIO_KEYS = (("R_b", "n_branches", -1), ("R_d", "mean_diameter_mm", 1), ("R_l", "mean_length_mm", 1))
 
 
-def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, prespecified=False):
+def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, prespecified=False,
+                     min_branches=3):
     """
     Horsfield's three ratios, read as the slopes of the semi-log plots of the
     branch count, the mean diameter and the mean length against the order.
@@ -995,6 +1054,22 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
     --fit-orders after seeing the table and passing it before produce the
     same command line. So it defaults to False for both the explicit range
     and the diameter filter, and only --prespecified sets it.
+
+    `min_branches` censors the other end of the range, on the same footing.
+    At the top of a Strahler tree an order holds one or two elements, and an
+    element there is a chain of segments that kept its order across the
+    hilum: one row whose radius can triple from end to end, whose median
+    calibre therefore summarises nothing, and which IS its order's mean.
+    Such an order's SD is zero by construction, which is the tell in the
+    per-order table. Dropping it is mechanical and declarable in advance,
+    exactly like the diameter floor, and it takes the unreliable orders off
+    both ends of the range rather than only the thin one.
+
+    It costs R_b something, and honestly: N is an exact count, not an
+    estimate, and the trunk-ward orders this removes are the ones that
+    anchor the log N line. But the three ratios are fitted over one single
+    range by construction, so the choice is between paying that and quoting
+    ratios that do not rest on the same orders.
     """
     direction = ORDER_DIRECTION[ordering]
     rows = [row for row in summary if row["order"] >= 0 and row["n_branches"] > 0
@@ -1008,6 +1083,11 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
         rows = [row for row in rows if row["mean_diameter_mm"] >= min_diameter]
         selection = f"orders where the mean diameter clears {min_diameter:.2f} mm ({claim})"
 
+    thin = [row["order"] for row in rows if row["n_branches"] < min_branches]
+    if min_branches > 1:
+        rows = [row for row in rows if row["n_branches"] >= min_branches]
+        selection += f", orders carrying fewer than {min_branches} dropped"
+
     orders = [row["order"] for row in rows]
     fits = {}
     for name, key, sign in RATIO_KEYS:
@@ -1020,7 +1100,8 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
         fits[name] = dict(fit, ratio=10.0 ** (sign * direction * fit["slope"]),
                           ratio_low=bounds[0], ratio_high=bounds[1])
     return {"selection": selection, "rows": rows, "orders": orders, "fits": fits,
-            "min_diameter": min_diameter, "prespecified": bool(prespecified)}
+            "min_diameter": min_diameter, "prespecified": bool(prespecified),
+            "min_branches": min_branches, "dropped_thin": thin}
 
 
 def count_peak(rows, rise=1.2):
@@ -1048,7 +1129,14 @@ def count_peak(rows, rise=1.2):
 def print_ratios(result, ordering, counting):
     """Prints the ratio table, with what the fit rests on underneath it."""
     rows = result["rows"]
+    dropped = result.get("dropped_thin") or []
     print(f"\n=== branching ratios ({ordering}, {counting}s) ===")
+    if dropped:
+        print(f"  dropped order(s) {', '.join(str(o) for o in dropped)}: fewer than "
+              f"{result['min_branches']} {counting}s each. At the top of the tree an order holds "
+              f"one or two, its SD is zero by construction, and a single heterogeneous "
+              f"{counting} is the whole of its mean. Mechanical rule, both ends of the range, "
+              f"like the diameter floor")
     if len(rows) < 3:
         print(f"  {result['selection']}: {len(rows)} usable order(s), at least 3 are needed")
         return
@@ -1067,9 +1155,11 @@ def print_ratios(result, ordering, counting):
     print("  N          : " + " ".join(f"{row['n_branches']:7d}" for row in rows))
     print("  D mean (mm): " + " ".join(f"{row['mean_diameter_mm']:7.2f}" for row in rows))
     print("  L mean (mm): " + " ".join(f"{row['mean_length_mm']:7.2f}" for row in rows))
-    thin = [row["order"] for row in rows if row["n_branches"] < 3]
-    if thin:
-        print(f"  note: order(s) {', '.join(str(o) for o in thin)} rest on fewer than 3 branches")
+    flared = [row["order"] for row in rows if row.get("n_flared")]
+    if flared:
+        print(f"  WARNING: order(s) {', '.join(str(o) for o in flared)} still carry a flared "
+              f"{counting} (see the flare table). Their mean diameter averages runs that are not "
+              f"each one vessel, and it is inside the fit")
 
     floor = result["min_diameter"]
     edge = min(rows, key=lambda row: row["mean_diameter_mm"])
@@ -1093,6 +1183,55 @@ def print_ratios(result, ordering, counting):
               f"three ratios are therefore mechanically smaller here than their Strahler "
               f"counterparts on the very same tree, and are NOT comparable to published values. "
               f"Use --ordering strahler_dd before interpreting any of them")
+
+
+def print_flare(elements, limit):
+    """
+    The elements that come out wider at their end than at their start.
+
+    An element is meant to be one vessel: the run of segments that keep the
+    same order because a lateral branch left the trunk without raising it.
+    That construction is safe in the periphery, where the segments it joins
+    really are one vessel, and it is not safe at the top of the tree, where
+    a chain can keep its order across the hilum and be aggregated into a
+    single row that starts on one vessel and ends on another.
+
+    Nothing in the per-order table shows this. The mean diameter of such an
+    order is the median calibre of that row, and a median is a summary of a
+    thing that has no single calibre -- 7.1 mm for a run whose radius goes
+    from 3.8 to 11.2. So the check is here, per element, before the ratios:
+    the ratio of the two end calibres, which for a real artery is at most a
+    little under 1 and for a spliced chain is far above it.
+
+    Tortuosity catches the same elements sometimes, and less specifically:
+    a vessel is allowed to wander. It is not allowed to triple its calibre.
+
+    Only elements of two segments or more are eligible -- see `flared`.
+    """
+    chains = [e for e in elements if e["n_segments"] >= 2 and np.isfinite(flare(e))]
+    ranked = sorted(((flare(e), e) for e in chains), key=lambda pair: -pair[0])
+    over = [pair for pair in ranked if pair[0] > limit]
+    print(f"\n=== element flare (distal / proximal calibre) ===")
+    if not over:
+        worst = ranked[0][0] if ranked else float("nan")
+        print(f"  none of the {len(chains)} multi-segment elements exceeds {limit:.2f} "
+              f"(worst {worst:.2f}): every chain ends near the calibre it started at, so no "
+              f"order's mean diameter is averaging a run that is two vessels")
+        return
+    print(f"  {len(over)} of {len(chains)} multi-segment elements exceed {limit:.2f} "
+          f"({len(elements)} elements in all; single-segment ones cannot be a bad aggregation "
+          f"and are not counted)")
+    print("  element  order  n_seg    prox    dist   flare   length   tort")
+    for value, e in over[:12]:
+        print(f"  {e['element_id']:7d}  {e['order']:5d}  {e['n_segments']:5d}  "
+              f"{e['proximal_calibre_mm']:6.2f}  {e['distal_calibre_mm']:6.2f}  {value:6.2f}  "
+              f"{e['length_mm']:7.1f}  {e['tortuosity']:5.2f}")
+    if len(over) > 12:
+        print(f"  ... and {len(over) - 12} more")
+    print(f"  a flared element is a heterogeneous aggregation, not a vessel that widens: the "
+          f"chain kept one order across a junction and was grouped into one row. Its calibre_mm "
+          f"is a median over a radius that moves by the flare factor, and it is the whole of its "
+          f"order's mean wherever that order carries one or two elements")
 
 
 def ratio_rows(result, ordering, counting, spacing=None, floor_mm=None, subject=None):
@@ -1128,6 +1267,7 @@ def ratio_rows(result, ordering, counting, spacing=None, floor_mm=None, subject=
             "n_orders": fit["n_orders"] if fit else len(orders),
             "order_min": min(orders) if orders else None,
             "order_max": max(orders) if orders else None,
+            "fit_min_branches": result.get("min_branches"),
             "prespecified": int(result["prespecified"]),
         })
     return out
@@ -1931,7 +2071,7 @@ BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "strahler_dd", "bfs_gen
 ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm",
                  "mean_length_mm", "sd_length_mm", "mean_diameter_mm", "sd_diameter_mm",
                  "mean_radius_mm", "mean_proximal_calibre_mm", "mean_distal_calibre_mm",
-                 "mean_tortuosity", "mean_tip_radius_mm")
+                 "mean_tortuosity", "max_flare", "n_flared", "mean_tip_radius_mm")
 
 BIFURCATION_COLUMNS = ("node", "i", "j", "k",
                        "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
@@ -1941,11 +2081,12 @@ BIFURCATION_COLUMNS = ("node", "i", "j", "k",
 
 ELEMENT_COLUMNS = ("element_id", "order", "n_segments", "length_mm", "chord_mm", "tortuosity",
                    "calibre_mm", "mean_radius_mm", "proximal_calibre_mm", "distal_calibre_mm",
-                   "tip_radius_mm", "is_terminal", "synthetic_fraction")
+                   "flare", "tip_radius_mm", "is_terminal", "synthetic_fraction")
 
 RATIO_COLUMNS = ("subject", "spacing_x_mm", "spacing_y_mm", "spacing_z_mm", "anisotropy",
                  "fit_floor_mm", "ratio", "ordering", "counting", "value", "ci_low", "ci_high",
-                 "r2", "slope", "n_orders", "order_min", "order_max", "prespecified")
+                 "r2", "slope", "n_orders", "order_min", "order_max", "fit_min_branches",
+                 "prespecified")
 
 RECLAIM_COLUMNS = ("component_id", "repair", "length_mm", "median_radius_mm", "max_radius_mm",
                    "gap_wall_mm", "gap_axis_mm", "path_mm", "detour", "path_calibre_mm",
@@ -2461,7 +2602,8 @@ def compare_ratios(before, after, ordering, counting):
               f"orders clear the diameter floor. Pin the range with --fit-orders to compare")
 
 
-def summarize(result, ordering, order_range, min_diameter, prespecified=False, max_synthetic=1.0):
+def summarize(result, ordering, order_range, min_diameter, prespecified=False,
+              max_synthetic=1.0, min_branches=3, flare_limit=1.5):
     """
     Numbers the branches with the chosen ordering, then aggregates them both
     ways -- one row per order for segments, one for elements -- and fits the
@@ -2484,9 +2626,10 @@ def summarize(result, ordering, order_range, min_diameter, prespecified=False, m
         keep_elements = [e for e in elements if e["synthetic_fraction"] <= max_synthetic]
     else:
         keep, keep_elements = table, elements
-    summaries = {"segment": order_summary(keep, "order"),
-                 "element": order_summary(keep_elements, "order")}
-    ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter, prespecified)
+    summaries = {"segment": order_summary(keep, "order", flare_limit),
+                 "element": order_summary(keep_elements, "order", flare_limit)}
+    ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter, prespecified,
+                                         min_branches)
               for counting, rows in summaries.items()}
     return elements, summaries, ratios
 
@@ -2576,7 +2719,9 @@ def sweep_pruning(base_graph, positions, radii, world, voxel_size, args, factors
                         for counting in ("segment", "element"))
             continue
         elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                                args.fit_floor_mm, args.prespecified)
+                                                args.fit_floor_mm, args.prespecified,
+                                                min_branches=args.fit_min_branches,
+                                                flare_limit=args.element_flare)
         for counting in ("segment", "element"):
             fits = ratios[counting]["fits"]
             orders = ratios[counting]["orders"]
@@ -2731,6 +2876,21 @@ def main():
                         help="Identifier written into --ratios-csv, so the per-subject files of a "
                              "cohort concatenate into a table that can be read. Defaults to the "
                              "input filename")
+    parser.add_argument("--fit-min-branches", type=int, default=3, metavar="N",
+                        help="An order carried by fewer than N segments or elements is dropped "
+                             "from the fit. At the top of a Strahler tree an order holds one or "
+                             "two elements, its SD is zero by construction, and one heterogeneous "
+                             "element is the whole of its mean -- see --element-flare. The rule is "
+                             "mechanical and pre-specifiable, like the diameter floor, and it "
+                             "censors the other end of the same range. Costs R_b the trunk-ward "
+                             "orders that anchor its line, which is the price of fitting the "
+                             "three ratios over one range. 1 disables it. Default: 3")
+    parser.add_argument("--element-flare", type=float, default=1.5, metavar="RATIO",
+                        help="Report every element whose distal calibre exceeds its proximal one "
+                             "by more than this factor. A vessel tapers; a run several times wider "
+                             "at its end is a chain of segments that kept one order across a "
+                             "junction and got aggregated into one element, whose median calibre "
+                             "summarises nothing. Default: 1.5")
     parser.add_argument("--fit-min-diameter", type=float, default=None, metavar="MM",
                         help="Diameter floor of the fit in millimetres, overriding the rule above "
                              "outright. Use it to hold a cohort to one floor when the volumes were "
@@ -2921,7 +3081,9 @@ def main():
         print("diameter-defined Strahler did not converge; the last iteration is reported")
 
     elements, summaries, ratios = summarize(result, args.ordering, args.fit_orders,
-                                            args.fit_floor_mm, args.prespecified)
+                                            args.fit_floor_mm, args.prespecified,
+                                            min_branches=args.fit_min_branches,
+                                            flare_limit=args.element_flare)
     summary = summaries[args.count]
     bifurcations = analyze_bifurcations(table, "order", args.murray_min_voxels * voxel_size,
                                         positions, factors)
@@ -2940,6 +3102,7 @@ def main():
         print_analysis(graph, table, summary, bifurcations, args.ordering,
                        args.murray_min_voxels * voxel_size, args.count)
     # the ratios are the point of the run, so they survive --no-report
+    print_flare(elements, args.element_flare)
     for counting in ("segment", "element"):
         print_ratios(ratios[counting], args.ordering, counting)
 
@@ -3004,7 +3167,8 @@ def main():
             else:
                 fixed_elements, _, fixed_ratios = summarize(
                     fixed_result, args.ordering, args.fit_orders,
-                    args.fit_floor_mm, args.prespecified, args.max_synthetic)
+                    args.fit_floor_mm, args.prespecified, args.max_synthetic,
+                    min_branches=args.fit_min_branches, flare_limit=args.element_flare)
                 print_synthetic(synthetic_share(fixed_result["table"]))
                 fixed_bifurcations = analyze_bifurcations(
                     fixed_result["table"], "order", args.murray_min_voxels * voxel_size,

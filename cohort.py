@@ -54,8 +54,14 @@ def load(paths, counting, ordering=None):
     warning: generation-counted ratios are mechanically smaller than Strahler
     ones on the very same tree, so mixing the two produces a cohort spread
     that is entirely an artefact of how the runs were invoked.
+
+    The count floor is refused the same way and for the same reason. It is
+    the second rule that decides which orders enter the fit -- the diameter
+    floor censors the thin end, --fit-min-branches the trunk end -- and two
+    subjects run under two values of it are fitted over ranges that are not
+    the same measurement, whatever their spacings agree on.
     """
-    subjects, orderings = {}, set()
+    subjects, orderings, floors = {}, set(), set()
     for path in paths:
         with open(path, newline="") as handle:
             for row in csv.DictReader(handle):
@@ -64,18 +70,24 @@ def load(paths, counting, ordering=None):
                 if ordering and row.get("ordering") != ordering:
                     continue
                 orderings.add(row.get("ordering"))
+                if row.get("fit_min_branches") not in (None, ""):
+                    floors.add(row["fit_min_branches"])
                 name = row.get("subject") or os.path.basename(path)
                 subjects.setdefault(name, {"subject": name, "path": path, "ratios": {}})
                 subjects[name]["ratios"][row["ratio"]] = row
                 for column in ("spacing_x_mm", "spacing_y_mm", "spacing_z_mm", "anisotropy",
-                               "fit_floor_mm", "order_min", "order_max", "n_orders",
-                               "prespecified"):
+                               "fit_floor_mm", "fit_min_branches", "order_min", "order_max",
+                               "n_orders", "prespecified"):
                     if row.get(column) not in (None, ""):
                         subjects[name][column] = row[column]
     if len(orderings) > 1:
         raise SystemExit(f"the files mix orderings {sorted(orderings)}; ratios counted in "
                          f"generations and in Strahler orders are not comparable on the same "
                          f"tree. Re-run the odd ones, or select one with --ordering")
+    if len(floors) > 1:
+        raise SystemExit(f"the files mix --fit-min-branches {sorted(floors)}; that floor moves "
+                         f"which orders enter the fit, so ratios computed under two values of it "
+                         f"do not rest on comparable ranges. Re-run the odd ones")
     return list(subjects.values()), (orderings.pop() if orderings else "")
 
 
@@ -200,8 +212,8 @@ def main():
 
     if args.out:
         columns = ("subject", "spacing_x_mm", "spacing_y_mm", "spacing_z_mm", "anisotropy",
-                   "fit_floor_mm", "order_min", "order_max", "n_orders", "prespecified",
-                   "excluded", "flagged") + tuple(
+                   "fit_floor_mm", "fit_min_branches", "order_min", "order_max", "n_orders",
+                   "prespecified", "excluded", "flagged") + tuple(
                        f"{name}{suffix}" for name in RATIOS
                        for suffix in ("", "_ci_low", "_ci_high", "_r2"))
         rows = []

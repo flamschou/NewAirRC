@@ -558,6 +558,64 @@ R_d by 5.6 %. On an isotropic input the three axes agree and the criterion is
 the one it has always been. `--fit-min-diameter` overrides the rule in
 millimetres outright.
 
+### The other end of the range: orders carried by one element
+
+The diameter floor censors the thin end of the fit. The trunk end needs
+censoring too, and for a different reason.
+
+At the top of a Strahler tree an order holds one or two elements — the
+topology guarantees it, the top order holds exactly one. That is not a
+sampling accident that a better acquisition would fix, and its consequences
+are mechanical: such an order's SD is zero by construction, and its mean
+diameter is the median calibre of a single row.
+
+Which would be fine if that row were a vessel. Often it is not. An element is
+the run of segments that keep the same order, and near the hilum a chain can
+keep its order across the central junction: four segments, aggregated into
+one element, entering at r = 3.8 mm and leaving at r = 11.2 mm. Its
+`calibre_mm` — a median — reports 7.1 for a run whose radius triples. Nothing
+in the per-order table shows this; the order simply comes out with a mean
+diameter that violates monotonicity against the order below it, and the
+temptation is to blame the skeletonization, which is innocent.
+
+`--fit-min-branches N` (default 3) drops any order carried by fewer than N
+segments or elements. It is mechanical, declarable in advance, and symmetric
+with the diameter floor: unreliable orders are removed from both ends of the
+range rather than from the thin end only. `--fit-min-branches 1` disables it.
+
+It costs R_b something, and the cost is real: N is an exact count, not an
+estimate, and the trunk-ward orders this removes are the ones anchoring the
+log N line. The three ratios are fitted over one single range by
+construction, so the choice is between paying that and quoting ratios that do
+not rest on the same orders. Dropping the top two orders also leaves fewer
+points, so the *confidence interval widens* even as R² improves — a fit over
+four orders carries two degrees of freedom and a t multiplier of 4.30.
+Both numbers are the result.
+
+`cohort.py` refuses a set of files that mixes two values of the floor, the
+same way it refuses a set that mixes orderings.
+
+### Which elements are not vessels
+
+The direct check is `--element-flare` (default 1.5): every element whose
+distal calibre exceeds its proximal one by more than that factor is listed
+before the ratios, worst first, with its order, its segment count and its
+tortuosity. `flare` is also a column in `--elements-csv`, and `max_flare` /
+`n_flared` in `--orders-csv`.
+
+A vessel tapers. It never widens by half over its own length, so a flared
+element is a heterogeneous aggregation and nothing else. This is more
+specific than tortuosity, which catches the same elements sometimes and for
+the wrong reason — a real vessel is allowed to wander around a junction; the
+1.72 tortuosity of a spliced chain is the detour around the carrefour, not a
+serpentine artery.
+
+Only elements of two segments or more are eligible. A one-segment element was
+aggregated from nothing, so whatever its end calibres do, the answer cannot
+be that the grouping put two vessels in one row. Left in, those rows swamp
+the list: on the bundled LIDC example, 46 of 52 hits are single-segment
+order-1 twigs and the eight that mean something disappear among them.
+
 ### Pruning sensitivity
 
 Pruning is the one free parameter no measurement constrains, and it acts on
