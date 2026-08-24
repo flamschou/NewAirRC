@@ -1022,6 +1022,36 @@ ORDER_DIRECTION = {"strahler": 1, "strahler_dd": 1, "generation": -1, "bfs_gener
 # culprit row to point at and the right response depends on the tree.
 ORDER_SPREAD_LIMIT = 2.0
 
+# Below this R2 a fitted ratio is not a trend, whatever value it landed on.
+# It matters most for the floor warnings underneath the table: a ratio under
+# its floor with a high R2 is a measured defect worth naming, and the same
+# ratio with a low R2 is noise that happened to come out low. Saying "if that
+# is high" and leaving the reader to judge gets it wrong in exactly the case
+# the warning exists for.
+TREND_R2 = 0.7
+
+# What each ratio may not go under, the law that says so, and what a real
+# breach of it means. The three mechanisms are distinct and the diagnosis has
+# to match the ratio -- they share a proximate cause, missing branches, and
+# nothing else.
+RATIO_FLOORS = (
+    ("R_b", 2.0, "a binary tree cannot branch less than 2:1",
+     "an R_b under 2 is missed lateral branches collapsing the counts at the low orders. "
+     "The periphery is where a segmentation loses the most, so N there is undercounted, the "
+     "log N line flattens, and the ratio of counts per step towards the trunk comes out under "
+     "a floor no tree can actually cross"),
+    ("R_d", 1.0, "vessels cannot narrow towards the trunk",
+     "an R_d under 1 is an ordering that failed, not a tree that narrows. Either the "
+     "diameter-defined promotion put wide vessels in low orders -- check calibre_spread in the "
+     "per-order table -- or an order near the trunk is a heterogeneous aggregate whose median "
+     "calibre understates it, which the flare table names"),
+    ("R_l", 1.0, "vessels cannot shorten towards the trunk",
+     "an R_l under 1 is order-1 elements running long because the bifurcations that should have "
+     "interrupted them were never segmented, while every order above them is bounded by "
+     "junctions that were. The trunk end is shortened by the field of view at the same time, "
+     "since the top element starts at the edge of the mask and not at an anatomical origin"),
+)
+
 
 def semilog_fit(orders, values):
     """
@@ -1257,18 +1287,20 @@ def print_ratios(result, ordering, counting):
               f"the same size -- and {ordering} promotes on calibre, so an order this wide means "
               f"the promotion failed there. Its mean diameter is a summary of a mixture")
 
-    for name, floor_value, sense in (("R_b", 2.0, "a binary tree cannot branch less than 2:1"),
-                                     ("R_d", 1.0, "vessels cannot narrow towards the trunk"),
-                                     ("R_l", 1.0, "vessels cannot shorten towards the trunk")):
+    for name, floor_value, law, mechanism in RATIO_FLOORS:
         fit = result["fits"][name]
         if fit is None or fit["ratio"] >= floor_value:
             continue
-        print(f"  WARNING: {name} = {fit['ratio']:.3f} is below {floor_value:.1f} -- "
-              f"{sense}. R2 = {fit['r2']:.3f}, so if that is high the trend is real and the "
-              f"defect is in what was measured, not in the fit. Read it as a symptom and quote "
-              f"it as one: an R_l under 1 is the signature of order-1 elements running long "
-              f"because the bifurcations that should have interrupted them were never "
-              f"segmented, while the orders above them are bounded by junctions that were")
+        print(f"  WARNING: {name} = {fit['ratio']:.3f} is below {floor_value:.1f} -- {law}")
+        if fit["r2"] >= TREND_R2:
+            print(f"    R2 = {fit['r2']:.3f}, above {TREND_R2:.2f}: the trend is real and the "
+                  f"defect is in what was measured, not in the fit. Read it as a symptom and "
+                  f"quote it as one -- {mechanism}")
+        else:
+            print(f"    R2 = {fit['r2']:.3f}, under {TREND_R2:.2f}: the points do not lie on a "
+                  f"line, so this is scatter reaching past the floor and not a trend. The ratio "
+                  f"is not interpretable at all here -- neither as a measurement nor as a "
+                  f"symptom -- and the reason to look is the scatter, not the value")
 
     floor = result["min_diameter"]
     edge = min(rows, key=lambda row: row["mean_diameter_mm"])

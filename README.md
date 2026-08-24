@@ -685,19 +685,35 @@ the promotion failed there.
 
 ### Ratios below their floor
 
-R_b < 2, R_d < 1 and R_l < 1 are each flagged under the table with their R².
-A binary tree cannot branch less than 2:1 and vessels do not narrow or
-shorten towards the trunk, so a ratio under its floor is a symptom, and a
-high R² next to it says the trend is real and the defect is in what was
-measured rather than in the fit.
+R_b < 2, R_d < 1 and R_l < 1 are each flagged under the table. A binary tree
+cannot branch less than 2:1, and vessels neither narrow nor shorten towards
+the trunk, so a ratio under its floor did not measure a tree.
 
-R_l is the one that goes first. Order-1 elements are leaves that run until
-the segmentation loses them, uninterrupted by the bifurcations that were
-never segmented, while every order above them is bounded by junctions that
-were. Push that far enough and L̄ decreases monotonically towards the trunk —
-23.32, 22.04, 17.59, 14.63 on one subject, R_l = 0.850 with R² = 0.954.
-That number is not a measurement of the tree. It is a quantified measurement
-of how much of the tree went missing, and it should be quoted as one.
+**The diagnosis is per ratio.** The three share a proximate cause — branches
+that were never segmented — and nothing else:
+
+- **R_b < 2** — missed lateral branches collapsing the counts at the low
+  orders. The periphery is where a segmentation loses the most, so N there is
+  undercounted, the log N line flattens, and the count ratio per step comes
+  out under a floor no tree can cross.
+- **R_d < 1** — an ordering that failed, not a tree that narrows. Either the
+  diameter-defined promotion put wide vessels in low orders (check
+  `calibre_spread`) or an order near the trunk is a heterogeneous aggregate
+  whose median calibre understates it (check the flare table).
+- **R_l < 1** — order-1 elements running long because the bifurcations that
+  should have interrupted them were never segmented, while every order above
+  them is bounded by junctions that were. The trunk end is shortened at the
+  same time by the field of view, since the top element starts at the edge of
+  the mask rather than at an anatomical origin.
+
+**The R² decides whether there is anything to diagnose at all**, against a
+hard `TREND_R2 = 0.7` and not the reader's judgement. Above it the trend is
+real and the ratio is a quantified measurement of how much of the tree went
+missing — L̄ of 23.32, 22.04, 17.59, 14.63 on one subject gives R_l = 0.850
+with R² = 0.954, and that should be quoted as the symptom it is. Under it the
+points do not lie on a line: the floor breach is scatter, the ratio is not
+interpretable either way, and what deserves attention is the scatter rather
+than the value.
 
 ### Pruning sensitivity
 
