@@ -548,18 +548,51 @@ def trunk_calibre(nodes, world, radii, head_radius, tail_radius, voxel_size):
     return float(np.median(radii[order[window]]))
 
 
+# Widest exponent Murray's law is solved over. Nothing physical lives near
+# the top of it -- 3 is the laminar optimum and 2 conserves cross-section --
+# so it is a bracket, not a range of interest, and a junction whose root
+# falls outside it has not measured a bifurcation.
+MURRAY_MAX_EXPONENT = 50.0
+
+
 def murray_exponent(parent_radius, child_radii):
     """
     Solves sum(r_child^n) = r_parent^n, the exponent of Murray's law.
 
     n = 3 is the theoretical optimum for laminar flow, n = 2 means the
-    cross-section is conserved across the bifurcation. Returns None when
-    the radii make the equation unsolvable (a child wider than its parent).
+    cross-section is conserved across the bifurcation. Returns None when the
+    radii make the equation unsolvable, which happens two ways.
+
+    The obvious one is a child wider than its parent, and `max >= 1` catches
+    it. The other is a junction whose daughters are each very nearly as wide
+    as the parent: the residual is then positive at both ends of the bracket
+    -- two daughters at 0.99967 of the parent put the root at n = 2100 --
+    and brentq raises rather than returning. `max < 1` and `sum > 1` do not
+    exclude it, so the bracket is checked directly.
+
+    Such a junction is not a Murray violation to be reported, it is a
+    measurement that failed: the daughters' proximal calibres were read
+    inside the junction blob, or the vessel genuinely doubles its
+    cross-section there. `area_ratio` on the same row records it either way
+    -- it sits near 2 for exactly these -- so nothing is lost by returning
+    None here.
     """
-    ratios = np.asarray(child_radii, float) / parent_radius
-    if parent_radius <= 0 or ratios.max() >= 1.0 or ratios.sum() <= 1.0:
+    children = np.asarray(child_radii, float)
+    # the guards on the parent come before the division, or a parent radius
+    # of 0 warns on the way to being rejected
+    if parent_radius <= 0 or children.size < 2 or not np.isfinite(children).all():
         return None
-    return float(brentq(lambda n: np.sum(ratios ** n) - 1.0, 1e-3, 50.0))
+    ratios = children / parent_radius
+    if ratios.max() >= 1.0 or ratios.sum() <= 1.0:
+        return None
+
+    def residual(n):
+        return float(np.sum(ratios ** n) - 1.0)
+
+    low, high = 1e-3, MURRAY_MAX_EXPONENT
+    if residual(low) * residual(high) > 0.0:
+        return None
+    return float(brentq(residual, low, high))
 
 
 def branch_table(graph, ordered, smooth, radii, voxel_size, direction_offset=DIRECTION_OFFSET,
