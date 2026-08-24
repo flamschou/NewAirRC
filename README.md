@@ -595,6 +595,33 @@ Both numbers are the result.
 `cohort.py` refuses a set of files that mixes two values of the floor, the
 same way it refuses a set that mixes orderings.
 
+### The range must stay contiguous
+
+Censoring orders out of the middle leaves a hole, and a hole is worse than
+the order it removed. The slope is fitted against the order **number**, so a
+surviving island above the gap sits far from the mean of what is left and
+carries leverage in proportion to that distance squared.
+
+Concretely: drop order 5 from a range of 1..6 and the lone point at 6 is 2.8
+orders off a mean of 3.2. It supplies 7.84 of the 14.8 total scatter — more
+than half the weight deciding the slope — and it is by construction the least
+reliable point in the set, since it survived only because the filter that
+removed its neighbour did not quite reach it. On one subject that produced
+R_b = 1.924, below the theoretical floor of 2 for a binary tree, with
+R² = 0.803. Cutting back to 1..4 gave R_d = 1.500, R² = 0.987.
+
+So whatever the two floors remove, the range is then cut back to the orders
+consecutive with the **lowest** survivor. Lowest and not longest: for a
+Strahler ordering the low end is the periphery, where an order holds hundreds
+of branches, and the high end is the trunk, where it holds one or two.
+Anchoring low keeps the reliable block; taking whichever run happens to be
+longer would make the range depend on where the holes fell, which is the
+data-dependence the pre-specification exists to rule out.
+
+The cost is that a hole low in the range can leave fewer than three points,
+and then there is no fit at all. That is the correct failure: it is reported
+as `at least 3 are needed`, rather than a slope quietly drawn across a gap.
+
 ### Which elements are not vessels
 
 The direct check is `--element-flare` (default 1.5): every element whose
@@ -615,6 +642,62 @@ aggregated from nothing, so whatever its end calibres do, the answer cannot
 be that the grouping put two vessels in one row. Left in, those rows swamp
 the list: on the bundled LIDC example, 46 of 52 hits are single-segment
 order-1 twigs and the eight that mean something disappear among them.
+
+**A flared element leaves the statistics; the order that held it does not.**
+The tree keeps it — removing it from the graph would change the ordering —
+but it comes out of the averages and out of the fit, one row at a time, on
+the same footing as `--max-synthetic`.
+
+Excluding the whole order instead scales the wrong way. The larger an order,
+the likelier it holds at least one flared element, so a presence-based rule
+preferentially destroys the orders worth fitting. Measured on the bundled
+example:
+
+| order | elements | flared | share |
+|------:|---------:|-------:|------:|
+| 1 | 1084 | 4 | 0.37 % |
+| 3 | 72 | 3 | 4.2 % |
+| 4 | 28 | 1 | 3.6 % |
+| 5–8 | 25 | 0 | 0 % |
+
+Dropping orders 1, 3 and 4 for eight bad rows out of 1184 left the fit a
+single point. Removing the eight rows moved R_d from 1.347 to 1.346.
+
+### Orders that are not one population
+
+`calibre_spread` (in `--orders-csv`) is the 90th percentile of an order's
+member calibres over the 10th. It is the *other* way an order fails to be a
+summary, and it is not flare: flare is measured **along** a row that turns
+out to be two vessels, spread **across** rows that are not the same size.
+Neither implies the other, and segments — which can never flare, having been
+aggregated from nothing — can still spread badly. That is the case the flare
+check cannot see.
+
+An order wider than 2× across that band is reported under the ratio table and
+left in, since unlike flare there is no single culprit row to point at.
+Percentiles and not max-over-min: an order of 1274 segments has two extreme
+rows whose ratio is 8 or 11 and says nothing about the other 1272. Measured
+that way every order of the example looks broken; on the 10–90 band they run
+1.24 to 1.82 and the statistic starts discriminating.
+
+Since `strahler_dd` promotes on calibre, an order that spreads is telling you
+the promotion failed there.
+
+### Ratios below their floor
+
+R_b < 2, R_d < 1 and R_l < 1 are each flagged under the table with their R².
+A binary tree cannot branch less than 2:1 and vessels do not narrow or
+shorten towards the trunk, so a ratio under its floor is a symptom, and a
+high R² next to it says the trend is real and the defect is in what was
+measured rather than in the fit.
+
+R_l is the one that goes first. Order-1 elements are leaves that run until
+the segmentation loses them, uninterrupted by the bifurcations that were
+never segmented, while every order above them is bounded by junctions that
+were. Push that far enough and L̄ decreases monotonically towards the trunk —
+23.32, 22.04, 17.59, 14.63 on one subject, R_l = 0.850 with R² = 0.954.
+That number is not a measurement of the tree. It is a quantified measurement
+of how much of the tree went missing, and it should be quoted as one.
 
 ### Pruning sensitivity
 

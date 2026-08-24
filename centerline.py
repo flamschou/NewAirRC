@@ -960,6 +960,25 @@ def order_summary(table, order_key, flare_limit=1.5):
     no mean. An order whose elements flare is one whose mean diameter is a
     summary of things that are not each a vessel, and that is worth having
     in the per-order table next to the mean it explains.
+
+    `calibre_spread` is the 90th percentile of the member calibres over the
+    10th, and it is the
+    other way an order can fail to be a summary -- not one row that is two
+    vessels, but several rows that are not the same size. The two are
+    distinct and neither implies the other: flare is measured ALONG a row,
+    spread ACROSS the rows of an order. Segments never flare by definition
+    (a segment was aggregated from nothing) yet a segment order can spread
+    badly, which is the case the flare check cannot see.
+
+    Percentiles and not max over min: an order of 1274 segments has two
+    extreme rows whose ratio is 8 or 11 and says nothing about the other
+    1272. Measured that way every order of the bundled example looks
+    broken; measured on the 10-90 band they run 1.24 to 1.82 and the
+    statistic starts discriminating.
+
+    A diameter-defined Strahler ordering promotes on calibre, so its orders
+    are supposed to come out narrow in spread. One that does not is telling
+    you the promotion failed there.
     """
     rows = []
     for order in sorted({b[order_key] for b in table}):
@@ -982,6 +1001,8 @@ def order_summary(table, order_key, flare_limit=1.5):
             "mean_proximal_calibre_mm": float(np.mean([b["proximal_calibre_mm"] for b in branches])),
             "mean_distal_calibre_mm": float(np.mean([b["distal_calibre_mm"] for b in branches])),
             "mean_tortuosity": float(np.mean([b["tortuosity"] for b in branches])),
+            "calibre_spread": (float(np.percentile(calibres, 90) / np.percentile(calibres, 10))
+                               if np.percentile(calibres, 10) > 0 else None),
             "max_flare": float(max(flares)) if flares else None,
             "n_flared": chains,
             "mean_tip_radius_mm": float(np.mean([b["tip_radius_mm"] for b in terminal])) if terminal else None,
@@ -994,6 +1015,12 @@ def order_summary(table, order_key, flare_limit=1.5):
 # branching ratios are all defined per step towards the trunk, so the fitted
 # slopes have to be flipped for the peripheral orderings.
 ORDER_DIRECTION = {"strahler": 1, "strahler_dd": 1, "generation": -1, "bfs_generation": -1}
+
+# How far an order may span in calibre, 90th percentile of its members over
+# the 10th, before its mean stops being a summary of one population. Not a filter: an order
+# this wide is reported and left in, because unlike flare it has no single
+# culprit row to point at and the right response depends on the tree.
+ORDER_SPREAD_LIMIT = 2.0
 
 
 def semilog_fit(orders, values):
@@ -1027,6 +1054,40 @@ def semilog_fit(orders, values):
 
 
 RATIO_KEYS = (("R_b", "n_branches", -1), ("R_d", "mean_diameter_mm", 1), ("R_l", "mean_length_mm", 1))
+
+
+def contiguous_run(rows):
+    """
+    The run of consecutive orders holding the lowest one that survived.
+
+    Censoring rows out of the middle of the range leaves a hole, and a hole
+    is not neutral. The slope is fitted against the order NUMBER, so a
+    surviving island above the gap sits far from the mean of the retained
+    orders and carries leverage in proportion to that distance squared. Drop
+    order 5 from 1..6 and the lone point at 6 is 2.8 orders off a mean of
+    3.2: it supplies 7.84 of the 14.8 total scatter, more than half the
+    weight deciding the slope, and it is by construction the least reliable
+    point in the set -- it survived only because the filter that removed its
+    neighbour did not reach it. That is how a filter meant to protect the
+    fit ends up handing it to the order it was protecting against.
+
+    The anchor is the lowest order, not the longest run. For a Strahler
+    ordering the low end is the periphery, where an order holds hundreds of
+    branches and its mean is worth something, while the high end is the
+    trunk, where it holds one or two. Anchoring low keeps the reliable
+    block; picking whichever run happens to be longer would make the range
+    depend on where the holes fell, which is exactly the data-dependence the
+    pre-specification is meant to rule out.
+    """
+    if not rows:
+        return rows
+    ordered = sorted(rows, key=lambda row: row["order"])
+    keep = [ordered[0]]
+    for row in ordered[1:]:
+        if row["order"] != keep[-1]["order"] + 1:
+            break
+        keep.append(row)
+    return keep
 
 
 def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, prespecified=False,
@@ -1070,6 +1131,18 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
     anchor the log N line. But the three ratios are fitted over one single
     range by construction, so the choice is between paying that and quoting
     ratios that do not rest on the same orders.
+
+    Flared elements are gone before this function sees the summary, taken
+    out one by one rather than by the order that held them -- see
+    `summarize`. Excluding the whole order would scale the wrong way: the
+    larger an order, the likelier it holds at least one flared element, so
+    the rule would preferentially destroy the best-sampled orders. On the
+    bundled example it removes orders of 1084, 72 and 28 elements over 4, 3
+    and 1 bad rows, and leaves the fit one point.
+
+    Whatever that removes, the range that comes out is then cut back to
+    the orders consecutive with the lowest survivor -- see `contiguous_run`
+    for why a hole in the middle is worse than the order it removed.
     """
     direction = ORDER_DIRECTION[ordering]
     rows = [row for row in summary if row["order"] >= 0 and row["n_branches"] > 0
@@ -1088,6 +1161,13 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
         rows = [row for row in rows if row["n_branches"] >= min_branches]
         selection += f", orders carrying fewer than {min_branches} dropped"
 
+    kept = contiguous_run(rows)
+    surviving = {row["order"] for row in kept}
+    gap = [row["order"] for row in rows if row["order"] not in surviving]
+    rows = kept
+    if gap:
+        selection += ", cut back to the contiguous run"
+
     orders = [row["order"] for row in rows]
     fits = {}
     for name, key, sign in RATIO_KEYS:
@@ -1101,7 +1181,7 @@ def branching_ratios(summary, ordering, order_range=None, min_diameter=0.0, pres
                           ratio_low=bounds[0], ratio_high=bounds[1])
     return {"selection": selection, "rows": rows, "orders": orders, "fits": fits,
             "min_diameter": min_diameter, "prespecified": bool(prespecified),
-            "min_branches": min_branches, "dropped_thin": thin}
+            "min_branches": min_branches, "dropped_thin": thin, "dropped_gap": gap}
 
 
 def count_peak(rows, rise=1.2):
@@ -1137,6 +1217,13 @@ def print_ratios(result, ordering, counting):
               f"one or two, its SD is zero by construction, and a single heterogeneous "
               f"{counting} is the whole of its mean. Mechanical rule, both ends of the range, "
               f"like the diameter floor")
+    gap = result.get("dropped_gap") or []
+    if gap:
+        print(f"  dropped order(s) {', '.join(str(o) for o in gap)}: left stranded above the hole "
+              f"the cuts opened. The slope is fitted against the order number, so an island past "
+              f"a gap sits far from the mean of what is left and carries leverage in proportion "
+              f"to that distance squared -- it would decide the slope it was least entitled to "
+              f"decide. The range is cut back to the orders consecutive with the lowest survivor")
     if len(rows) < 3:
         print(f"  {result['selection']}: {len(rows)} usable order(s), at least 3 are needed")
         return
@@ -1160,6 +1247,28 @@ def print_ratios(result, ordering, counting):
         print(f"  WARNING: order(s) {', '.join(str(o) for o in flared)} still carry a flared "
               f"{counting} (see the flare table). Their mean diameter averages runs that are not "
               f"each one vessel, and it is inside the fit")
+
+    wide = [row for row in rows if (row.get("calibre_spread") or 0) > ORDER_SPREAD_LIMIT]
+    if wide:
+        detail = ", ".join(f"{row['order']} ({row['calibre_spread']:.2f}x)" for row in wide)
+        print(f"  WARNING: order(s) {detail} span more than {ORDER_SPREAD_LIMIT:.1f}x in calibre "
+              f"across their 10-90 band, and are inside the fit. That is not "
+              f"flare -- flare is one row that is two vessels, this is several rows that are not "
+              f"the same size -- and {ordering} promotes on calibre, so an order this wide means "
+              f"the promotion failed there. Its mean diameter is a summary of a mixture")
+
+    for name, floor_value, sense in (("R_b", 2.0, "a binary tree cannot branch less than 2:1"),
+                                     ("R_d", 1.0, "vessels cannot narrow towards the trunk"),
+                                     ("R_l", 1.0, "vessels cannot shorten towards the trunk")):
+        fit = result["fits"][name]
+        if fit is None or fit["ratio"] >= floor_value:
+            continue
+        print(f"  WARNING: {name} = {fit['ratio']:.3f} is below {floor_value:.1f} -- "
+              f"{sense}. R2 = {fit['r2']:.3f}, so if that is high the trend is real and the "
+              f"defect is in what was measured, not in the fit. Read it as a symptom and quote "
+              f"it as one: an R_l under 1 is the signature of order-1 elements running long "
+              f"because the bifurcations that should have interrupted them were never "
+              f"segmented, while the orders above them are bounded by junctions that were")
 
     floor = result["min_diameter"]
     edge = min(rows, key=lambda row: row["mean_diameter_mm"])
@@ -1228,10 +1337,14 @@ def print_flare(elements, limit):
               f"{e['length_mm']:7.1f}  {e['tortuosity']:5.2f}")
     if len(over) > 12:
         print(f"  ... and {len(over) - 12} more")
+    hit = sorted({e["order"] for _, e in over})
     print(f"  a flared element is a heterogeneous aggregation, not a vessel that widens: the "
           f"chain kept one order across a junction and was grouped into one row. Its calibre_mm "
           f"is a median over a radius that moves by the flare factor, and it is the whole of its "
           f"order's mean wherever that order carries one or two elements")
+    print(f"  all {len(over)} are excluded from the order statistics and from the fit, one row at "
+          f"a time; order(s) {', '.join(str(o) for o in hit)} keep their remaining elements. The "
+          f"tree keeps them too -- only the averages lose them, as with --max-synthetic")
 
 
 def ratio_rows(result, ordering, counting, spacing=None, floor_mm=None, subject=None):
@@ -2071,7 +2184,8 @@ BRANCH_COLUMNS = ("branch_id", "generation", "strahler", "strahler_dd", "bfs_gen
 ORDER_COLUMNS = ("order", "n_branches", "n_terminal", "total_length_mm",
                  "mean_length_mm", "sd_length_mm", "mean_diameter_mm", "sd_diameter_mm",
                  "mean_radius_mm", "mean_proximal_calibre_mm", "mean_distal_calibre_mm",
-                 "mean_tortuosity", "max_flare", "n_flared", "mean_tip_radius_mm")
+                 "mean_tortuosity", "calibre_spread", "max_flare", "n_flared",
+                 "mean_tip_radius_mm")
 
 BIFURCATION_COLUMNS = ("node", "i", "j", "k",
                        "order", "n_children", "parent_radius_mm", "min_child_radius_mm",
@@ -2609,6 +2723,13 @@ def summarize(result, ordering, order_range, min_diameter, prespecified=False,
     ways -- one row per order for segments, one for elements -- and fits the
     ratios on each.
 
+    Flared elements leave on the same footing and for the same reason: a
+    row that starts on one vessel and ends on another is not a member of
+    its order's population, so it comes out of the averages while the tree
+    keeps it. Taking it out one row at a time is what makes the check
+    usable -- excluding every ORDER that holds one destroys the orders that
+    hold the most rows, which are the ones worth fitting.
+
     `max_synthetic` drops the branches that owe more than that share of
     their length to a repair, from the statistics only. The tree keeps them:
     they are what makes the reattached fragment reachable at all, so
@@ -2626,6 +2747,9 @@ def summarize(result, ordering, order_range, min_diameter, prespecified=False,
         keep_elements = [e for e in elements if e["synthetic_fraction"] <= max_synthetic]
     else:
         keep, keep_elements = table, elements
+    # a segment can never be flared (`flared` requires two members), so this
+    # touches the element statistics only, which is where aggregation happens
+    keep_elements = [e for e in keep_elements if not flared(e, flare_limit)]
     summaries = {"segment": order_summary(keep, "order", flare_limit),
                  "element": order_summary(keep_elements, "order", flare_limit)}
     ratios = {counting: branching_ratios(rows, ordering, order_range, min_diameter, prespecified,
