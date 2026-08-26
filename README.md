@@ -310,23 +310,28 @@ a CUDA out-of-memory falls back to the CPU by itself, as in `inference.py`.
 
 A manifest records where the data was when it was written -- these ones say
 `/data/flamant/data/ct` -- and the volumes outlive that path: a cluster
-mount, a copy on another filer, a scratch directory. `--data-dir` says where
-they are now, searched recursively and matched by filename, the way
-`inference.py` takes `--input-dir` rather than trusting a path written
-somewhere else. The manifest keeps saying the thing only it knows, which
-cases are validation:
+mount, a copy on another filer, a scratch directory. `--rewrite OLD=NEW`
+maps the prefix at read time (repeatable, first match wins, the file is not
+modified), so one manifest holds one definition of the split across all of
+them:
 
 ```bash
 python compute_dice.py --manifest manifest_vibe.json --split val \
-                       --data-dir /biomaps/spiro3d/.../lidc_idri \
+                       --rewrite /data/flamant/data/ct=/biomaps/spiro3d/.../ct \
                        --checkpoint .../last.ckpt --csv dice.csv
 ```
 
 Editing the manifest per machine instead is how two runs end up disagreeing
 about which cases are validation. When every case is skipped, the exit
-message names the root the manifest asked for and suggests the flag. A
-filename found in two directories under `--data-dir` is an error, not a
-guess.
+message names the root the manifest asked for and writes the `--rewrite`
+line for you.
+
+`--rewrite` is exact when the tree simply *moved*: one prefix substitution,
+and every case either resolves or visibly does not. When the layout changed
+too and no prefix fits, `--data-dir DIR` is the fallback -- it walks the
+directory and matches the manifest's files by name, the way `inference.py`
+takes `--input-dir`. A name found in two places under it is an error rather
+than a guess.
 
 Going through `compute_dice.py --checkpoint` rather than
 `inference.py --input-dir` also avoids a trap: `--input-dir` globs every

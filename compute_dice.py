@@ -261,16 +261,57 @@ class Predictor:
         print(f"  wrote {destination}")
 
 
+def rewrite_paths(entries, rules):
+    """
+    Moves the manifest's absolute paths onto the root they are mounted at here.
+
+    A manifest records where the data was when it was written -- these ones
+    say /data/flamant/data/ct -- and the volumes outlive that path: a cluster
+    mount, a copy on another filer, a scratch directory. Rewriting the prefix
+    at read time keeps one manifest, and therefore one definition of the
+    split, across all of them. Editing the file per machine instead is how
+    two runs end up disagreeing about which cases are validation.
+
+    This is the right tool when the tree MOVED: everything under the old root
+    is under the new one, laid out the same way, so one prefix substitution
+    is exact and every case either resolves or visibly does not. When the
+    layout itself changed, there is no prefix to substitute and `relocate`
+    matches on filenames instead.
+
+    The first rule that matches a path wins; nothing is written back to the
+    manifest.
+    """
+    for entry in entries:
+        for key in ("image", "label"):
+            for old, new in rules:
+                if entry[key].startswith(old):
+                    entry[key] = new + entry[key][len(old):]
+                    break
+    return entries
+
+
+def parse_rewrite(values):
+    """--rewrite OLD=NEW, repeatable, into (old, new) pairs."""
+    rules = []
+    for value in values or ():
+        if "=" not in value:
+            raise SystemExit(f"--rewrite wants OLD=NEW, got '{value}'")
+        old, new = value.split("=", 1)
+        rules.append((old, new))
+    return rules
+
+
 def relocate(entries, root):
     """
     Finds the manifest's files under `root`, by filename.
 
-    A manifest records where the data was when it was written -- these ones
-    say /data/flamant/data/ct -- and the volumes outlive that path: a
-    cluster mount, a copy on another filer, a scratch directory. The
-    manifest still says the thing only it knows, which case is validation;
-    `root` says where the files are now, the same way inference.py takes
-    --input-dir rather than trusting a path written elsewhere.
+    The fallback to `rewrite_paths` for when the layout changed and not just
+    the root, so no prefix substitution exists: the manifest still says the
+    thing only it knows, which case is validation, and `root` says where the
+    files are now -- the same way inference.py takes --input-dir rather than
+    trusting a path written elsewhere. Prefer --rewrite when the tree simply
+    moved; a prefix is exact, whereas a filename match is a guess that
+    happens to be safe here because these names carry their patient id.
 
     Matching is on the filename, over one recursive walk. A name found twice
     is a hard error rather than a guess: two patients holding a
@@ -452,7 +493,14 @@ def build_parser():
                            "inference.py writes them")
     data.add_argument("--pred-suffix", default=PRED_SUFFIX,
                       help=f"Suffix inference.py appended to the image stem. Default: {PRED_SUFFIX}")
-    data.add_argument("--data-dir", help="Where the manifest's volumes actually are, searched "
+    data.add_argument("--rewrite", action="append", metavar="OLD=NEW",
+                      help="Replace the prefix OLD with NEW in every path of the manifest, for a "
+                           "cohort read from another mount than the one it was written on. "
+                           "Repeatable; the first matching rule wins; the manifest is not "
+                           "modified. e.g. --rewrite /data/flamant/data/ct=/biomaps/spiro3d/ct")
+    data.add_argument("--data-dir", help="Fallback for when the layout changed and not just the "
+                                         "root, so no prefix substitution exists: where the "
+                                         "manifest's volumes actually are, searched "
                                          "recursively and matched by filename, for a cohort read "
                                          "from another mount than the one the manifest was written "
                                          "on. The manifest still decides which cases are in the "
@@ -506,6 +554,7 @@ def main():
         entries = [e for e in json.load(handle) if e.get("split") == args.split]
     if not entries:
         raise SystemExit(f"no entry with split={args.split} in {args.manifest}")
+    entries = rewrite_paths(entries, parse_rewrite(args.rewrite))
     if args.data_dir:
         entries = relocate(entries, args.data_dir)
     classes = class_pairs(args.classes, args.swap_av)
@@ -588,8 +637,10 @@ def main():
         if skipped["the manifest's image path does not exist here"]:
             root = os.path.commonpath([os.path.dirname(e["image"]) for e in entries])
             hint = (f"\n{args.manifest} points its data at {root}, which is not readable from "
-                    f"here.\nPass the directory the volumes are actually under:\n"
-                    f"    --data-dir /the/directory/they/are/in")
+                    f"here.\nMap it onto the root they are under now:\n"
+                    f"    --rewrite {root}=/the/root/they/are/under\n"
+                    f"or, if the layout changed too and no prefix fits, --data-dir DIR to find "
+                    f"them by name.")
         raise SystemExit(f"no case scored -- {why}{hint}")
     print_summary(rows, args)
     if args.csv:
