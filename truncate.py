@@ -298,7 +298,7 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
 # --------------------------------------------------------------------------- #
 # files
 # --------------------------------------------------------------------------- #
-def cut_settings(classes, args):
+def cut_settings(classes, args, source=None):
     """
     The rule a cut was made by, written beside the mask it produced.
 
@@ -309,8 +309,15 @@ def cut_settings(classes, args):
     disk is the cut it is asking for, instead of silently reusing another
     one, and so the floor that has to be reported with any number read off
     these masks can be found next to them.
+
+    `source` fingerprints the file that was cut, by size and modification
+    time. The rule alone is not enough to decide that a cut can be reused:
+    the mask it was made from can be rewritten under the same name -- a
+    reference resampled onto the image grid, a prediction regenerated from
+    another checkpoint -- and everything about the rule still matches while
+    the cut on disk no longer belongs to the file next to it.
     """
-    return {
+    settings = {
         "classes": {name: (list(values) if values else None) for name, values in classes},
         "min_diameter_mm": args.min_diameter,
         "max_generation": args.max_generation,
@@ -328,6 +335,11 @@ def cut_settings(classes, args):
         "keep_cycles": bool(args.keep_cycles),
         "root": list(args.root) if args.root else None,
     }
+    if source is not None and os.path.exists(source):
+        stat = os.stat(source)
+        settings["source"] = {"path": os.path.basename(source), "bytes": stat.st_size,
+                              "mtime": round(stat.st_mtime, 3)}
+    return settings
 
 
 def settings_path(destination):
@@ -385,7 +397,7 @@ def truncate_file(path, classes, args, destination=None):
         os.makedirs(directory, exist_ok=True)
     nib.save(nib.Nifti1Image(output, affine), destination)
     with open(settings_path(destination), "w") as handle:
-        json.dump(cut_settings(classes, args), handle, indent=1, sort_keys=True)
+        json.dump(cut_settings(classes, args, path), handle, indent=1, sort_keys=True)
     print(f"  wrote {destination}")
     for row in rows:
         row["output"] = destination

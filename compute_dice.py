@@ -180,6 +180,59 @@ def score(reference, prediction, spacing, args):
 # --------------------------------------------------------------------------- #
 # files
 # --------------------------------------------------------------------------- #
+def to_grid(mask, affine, target_shape, target_affine):
+    """
+    Nearest-neighbour resample of a boolean mask onto another grid, by affine.
+
+    The reference and the prediction need not be sampled the same way: the
+    labels come out of the generator, the synthetic images out of a second
+    pipeline, and `inference.py` maps its output back onto the IMAGE. A
+    viewer hides this -- it overlays in world coordinates and resamples for
+    display, so two volumes describing the same anatomy superimpose
+    perfectly while their arrays have different shapes -- but a Dice is read
+    element by element and needs one grid.
+
+    The reference is the side that moves, onto the prediction's grid, for
+    two reasons. It is what training compares against
+    (`transforms.py`: Spacingd on the image, then
+    `ResampleToMatchd(keys=["label"], key_dst="image", mode="nearest")`), so
+    the metric is read in the space the model was asked to answer in. And it
+    is the direction that cannot invent errors: were the prediction moved
+    onto a reference covering more ground, everything the model was never
+    shown would come back as a false negative.
+
+    Nearest neighbour, never an interpolation: an averaged label value is
+    not a label.
+    """
+    from nibabel.processing import resample_from_to
+
+    image = nib.Nifti1Image(mask.astype(np.uint8), affine)
+    resampled = resample_from_to(image, (tuple(target_shape), target_affine), order=0, cval=0)
+    return np.asarray(resampled.dataobj) > 0
+
+
+def outside_fraction(mask, affine, target_shape, target_affine):
+    """
+    The share of a mask that falls outside another grid's field of view.
+
+    Asked of the geometry -- where each foreground voxel centre lands in the
+    target's voxel coordinates -- and not of the volume before and after the
+    resampling, which folds in the loss of moving to a bigger voxel and
+    would report a field-of-view problem where there is only a coarser grid.
+
+    Anything outside is dropped rather than scored, so a Dice that comes
+    with a large fraction here is a Dice on part of the tree.
+    """
+    coordinates = np.argwhere(mask)
+    if not len(coordinates):
+        return 0.0
+    world = coordinates @ affine[:3, :3].T + affine[:3, 3]
+    inverse = np.linalg.inv(target_affine)
+    voxels = world @ inverse[:3, :3].T + inverse[:3, 3]
+    inside = np.all((voxels >= -0.5) & (voxels <= np.asarray(target_shape) - 0.5), axis=1)
+    return float(1.0 - inside.mean())
+
+
 def derived_path(base, tag, output_dir=None):
     """"vascular_case001.nii.gz" + "artery_errors_full" -> "vascular_case001_artery_errors_full.nii.gz"."""
     directory, filename = os.path.split(base)
@@ -379,7 +432,7 @@ def class_pairs(names, swap_av=False):
     return pairs
 
 
-def reusable(destination, classes, args):
+def reusable(destination, classes, args, source):
     """
     Whether the cut already on disk was made by the rule being asked for.
 
@@ -387,19 +440,23 @@ def reusable(destination, classes, args):
     cut of the artery and of a 6 mm cut of both trees alike, and reusing one
     for the other scores a class that was never cut -- two empty masks, which
     Dice reports as a perfect 1.0. The sidecar `truncate.py` writes next to
-    every mask carries the rule, so the question has an answer; no sidecar,
-    no reuse.
+    every mask carries the rule AND a fingerprint of the file it was cut
+    from, so a mask rewritten under the same name -- a reference resampled
+    onto the image grid, a prediction from another checkpoint -- invalidates
+    its cut instead of quietly outliving it. No sidecar, no reuse.
     """
     sidecar = settings_path(destination)
     if not (os.path.exists(destination) and os.path.exists(sidecar)):
         return False, "not cut yet"
     with open(sidecar) as handle:
         stored = json.load(handle)
-    wanted = cut_settings(classes, args)
+    wanted = cut_settings(classes, args, source)
     if stored == wanted:
         return True, ""
     differing = sorted(key for key in set(stored) | set(wanted)
                        if stored.get(key) != wanted.get(key))
+    if differing == ["source"]:
+        return False, "cut from an older version of the file"
     return False, "cut by another rule (" + ", ".join(differing) + ")"
 
 
@@ -414,7 +471,7 @@ def truncated(path, classes, args, verbose=True):
     cutting somewhere slightly different from the first.
     """
     destination = output_path(path, args.suffix, args.output_dir)
-    reuse, reason = reusable(destination, classes, args)
+    reuse, reason = reusable(destination, classes, args, path)
     if reuse and not args.overwrite:
         if verbose:
             print(f"  reusing {destination}")
@@ -583,12 +640,22 @@ def main():
             predictor.run(entry["image"], prediction_file)
 
         reference_data, affine, spacing = read_volume(entry["label"])
-        prediction_data = read_volume(prediction_file)[0]
-        if prediction_data.shape != reference_data.shape:
-            print(f"{case}: prediction shape {prediction_data.shape} against the reference's "
-                  f"{reference_data.shape}, skipping")
-            skipped["prediction and reference on different grids"] += 1
-            continue
+        prediction_data, prediction_affine, prediction_spacing = read_volume(prediction_file)
+
+        # The Dice is read on the prediction's grid, the reference being
+        # moved onto it when the two differ. Each side is still CUT on its
+        # own grid: the skeleton deserves the resolution its file was
+        # written at, and a `_large` mask sitting next to its source should
+        # have its source's geometry.
+        regrid = not (reference_data.shape == prediction_data.shape
+                      and np.allclose(affine, prediction_affine, atol=1e-3))
+        scoring_affine = prediction_affine if regrid else affine
+        scoring_spacing = prediction_spacing if regrid else spacing
+        if regrid and not args.quiet:
+            print(f"{case}: reference {reference_data.shape} and prediction "
+                  f"{prediction_data.shape} are sampled differently; the reference is "
+                  f"resampled onto the prediction's grid, as training does")
+
         # both sides truncated by the same rule, and both written out
         reference_classes = [(name, raw) for name, raw, _ in classes]
         prediction_classes = [(name, predicted) for name, _, predicted in classes]
@@ -606,14 +673,22 @@ def main():
             pairs = (("full", class_mask(reference_data, raw), class_mask(prediction_data, predicted)),
                      ("large", reference_cut[name], prediction_cut[name]))
             for tag, reference, prediction in pairs:
-                scored, errors, heat = score(reference, prediction, spacing, args)
+                if regrid:
+                    outside = outside_fraction(reference, affine, prediction_data.shape,
+                                               prediction_affine)
+                    if outside > 0.01:
+                        print(f"  WARNING: {outside:.1%} of the {tag} reference lies outside the "
+                              f"prediction's field of view; it is dropped, not scored, so the "
+                              f"Dice below covers {1 - outside:.1%} of the tree")
+                    reference = to_grid(reference, affine, prediction_data.shape, prediction_affine)
+                scored, errors, heat = score(reference, prediction, scoring_spacing, args)
                 row.update({f"{key}_{tag}": value for key, value in scored.items()})
                 if errors is not None:
                     save(derived_path(entry["label"], f"{name}_errors_{tag}", args.output_dir),
-                         errors, affine)
+                         errors, scoring_affine)
                 if heat is not None:
                     save(derived_path(entry["label"], f"{name}_localdice_{tag}", args.output_dir),
-                         heat, affine)
+                         heat, scoring_affine)
 
             reference_row = cut_rows.get((name, entry["label"]), {})
             prediction_row = cut_rows.get((name, prediction_file), {})
