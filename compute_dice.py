@@ -62,7 +62,9 @@ Usage:
                            --output-dir results/ --min-diameter 6
 """
 import argparse
+import collections
 import csv
+import glob
 import json
 import os
 
@@ -259,6 +261,55 @@ class Predictor:
         print(f"  wrote {destination}")
 
 
+def relocate(entries, root):
+    """
+    Finds the manifest's files under `root`, by filename.
+
+    A manifest records where the data was when it was written -- these ones
+    say /data/flamant/data/ct -- and the volumes outlive that path: a
+    cluster mount, a copy on another filer, a scratch directory. The
+    manifest still says the thing only it knows, which case is validation;
+    `root` says where the files are now, the same way inference.py takes
+    --input-dir rather than trusting a path written elsewhere.
+
+    Matching is on the filename, over one recursive walk. A name found twice
+    is a hard error rather than a guess: two patients holding a
+    `vascular.nii.gz` each would otherwise be silently collapsed onto
+    whichever the walk reached first, and the split would quietly stop
+    meaning what it says.
+    """
+    found = {}
+    duplicates = collections.defaultdict(list)
+    for path in glob.glob(os.path.join(root, "**", "*.nii.gz"), recursive=True):
+        name = os.path.basename(path)
+        if name in found:
+            duplicates[name].append(path)
+        else:
+            found[name] = path
+
+    wanted = {os.path.basename(entry[key]) for entry in entries for key in ("image", "label")}
+    clashing = sorted(name for name in duplicates if name in wanted)
+    if clashing:
+        raise SystemExit(
+            f"--data-dir {root} holds several files called " + ", ".join(clashing[:3])
+            + (f" (and {len(clashing) - 3} more)" if len(clashing) > 3 else "")
+            + ";\nthe manifest names files, not directories, so which one is meant "
+              "cannot be decided here")
+
+    missing = []
+    for entry in entries:
+        for key in ("image", "label"):
+            name = os.path.basename(entry[key])
+            if name in found:
+                entry[key] = found[name]
+            else:
+                missing.append(name)
+    if missing:
+        print(f"{len(missing)} file(s) of the split are not under {root}, "
+              f"e.g. {', '.join(missing[:3])}")
+    return entries
+
+
 def class_pairs(names, swap_av=False):
     """
     (class name, raw values in a reference, values in a prediction).
@@ -401,6 +452,12 @@ def build_parser():
                            "inference.py writes them")
     data.add_argument("--pred-suffix", default=PRED_SUFFIX,
                       help=f"Suffix inference.py appended to the image stem. Default: {PRED_SUFFIX}")
+    data.add_argument("--data-dir", help="Where the manifest's volumes actually are, searched "
+                                         "recursively and matched by filename, for a cohort read "
+                                         "from another mount than the one the manifest was written "
+                                         "on. The manifest still decides which cases are in the "
+                                         "split; this only says where they live, as inference.py's "
+                                         "--input-dir does. The manifest is not modified")
     data.add_argument("--checkpoint", help="Run inference for every case whose prediction is "
                                            "missing, with this .ckpt, and write it where "
                                            "inference.py would. Predictions already on disk are "
@@ -449,6 +506,8 @@ def main():
         entries = [e for e in json.load(handle) if e.get("split") == args.split]
     if not entries:
         raise SystemExit(f"no entry with split={args.split} in {args.manifest}")
+    if args.data_dir:
+        entries = relocate(entries, args.data_dir)
     classes = class_pairs(args.classes, args.swap_av)
     print(f"{len(entries)} case(s) in split '{args.split}', "
           + ", ".join(f"{name}: raw {raw} against predicted {predicted}"
@@ -456,6 +515,7 @@ def main():
           + f", large vessels cut at {args.min_diameter} mm")
 
     predictor = Predictor(args.checkpoint, args.cpu) if args.checkpoint else None
+    skipped = collections.Counter()
     rows = []
     for entry in entries:
         case = os.path.basename(entry["label"])
@@ -464,9 +524,11 @@ def main():
             if predictor is None:
                 print(f"{case}: no prediction at {prediction_file}, skipping "
                       f"(--checkpoint to produce it)")
+                skipped["no prediction, and no --checkpoint to produce it"] += 1
                 continue
             if not os.path.exists(entry["image"]):
                 print(f"{case}: no image at {entry['image']}, skipping")
+                skipped["the manifest's image path does not exist here"] += 1
                 continue
             print(f"{case}")
             predictor.run(entry["image"], prediction_file)
@@ -476,6 +538,7 @@ def main():
         if prediction_data.shape != reference_data.shape:
             print(f"{case}: prediction shape {prediction_data.shape} against the reference's "
                   f"{reference_data.shape}, skipping")
+            skipped["prediction and reference on different grids"] += 1
             continue
         # both sides truncated by the same rule, and both written out
         reference_classes = [(name, raw) for name, raw, _ in classes]
@@ -520,7 +583,14 @@ def main():
             rows.append(row)
 
     if not rows:
-        raise SystemExit("no case scored")
+        why = "; ".join(f"{count} case(s): {reason}" for reason, count in skipped.most_common())
+        hint = ""
+        if skipped["the manifest's image path does not exist here"]:
+            root = os.path.commonpath([os.path.dirname(e["image"]) for e in entries])
+            hint = (f"\n{args.manifest} points its data at {root}, which is not readable from "
+                    f"here.\nPass the directory the volumes are actually under:\n"
+                    f"    --data-dir /the/directory/they/are/in")
+        raise SystemExit(f"no case scored -- {why}{hint}")
     print_summary(rows, args)
     if args.csv:
         write_csv(args.csv, rows)

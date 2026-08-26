@@ -308,6 +308,26 @@ means. The checkpoint is loaded lazily, so a run over predictions that all
 exist never pays for torch at all. `--cpu` forces the inference off the GPU;
 a CUDA out-of-memory falls back to the CPU by itself, as in `inference.py`.
 
+A manifest records where the data was when it was written -- these ones say
+`/data/flamant/data/ct` -- and the volumes outlive that path: a cluster
+mount, a copy on another filer, a scratch directory. `--data-dir` says where
+they are now, searched recursively and matched by filename, the way
+`inference.py` takes `--input-dir` rather than trusting a path written
+somewhere else. The manifest keeps saying the thing only it knows, which
+cases are validation:
+
+```bash
+python compute_dice.py --manifest manifest_vibe.json --split val \
+                       --data-dir /biomaps/spiro3d/.../lidc_idri \
+                       --checkpoint .../last.ckpt --csv dice.csv
+```
+
+Editing the manifest per machine instead is how two runs end up disagreeing
+about which cases are validation. When every case is skipped, the exit
+message names the root the manifest asked for and suggests the flag. A
+filename found in two directories under `--data-dir` is an error, not a
+guess.
+
 Going through `compute_dice.py --checkpoint` rather than
 `inference.py --input-dir` also avoids a trap: `--input-dir` globs every
 `*.nii.gz` under the directory and only excludes the files already carrying
