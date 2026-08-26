@@ -670,8 +670,10 @@ def main():
             row = {"case": case, "class": name, "reference": entry["label"],
                    "prediction": prediction_file, "predicted_value": predicted[0],
                    "min_diameter_mm": args.min_diameter}
-            pairs = (("full", class_mask(reference_data, raw), class_mask(prediction_data, predicted)),
+            prediction_whole = class_mask(prediction_data, predicted)
+            pairs = (("full", class_mask(reference_data, raw), prediction_whole),
                      ("large", reference_cut[name], prediction_cut[name]))
+            moved = {}
             for tag, reference, prediction in pairs:
                 if regrid:
                     outside = outside_fraction(reference, affine, prediction_data.shape,
@@ -681,6 +683,7 @@ def main():
                               f"prediction's field of view; it is dropped, not scored, so the "
                               f"Dice below covers {1 - outside:.1%} of the tree")
                     reference = to_grid(reference, affine, prediction_data.shape, prediction_affine)
+                moved[tag] = (reference, prediction)
                 scored, errors, heat = score(reference, prediction, scoring_spacing, args)
                 row.update({f"{key}_{tag}": value for key, value in scored.items()})
                 if errors is not None:
@@ -689,6 +692,19 @@ def main():
                 if heat is not None:
                     save(derived_path(entry["label"], f"{name}_localdice_{tag}", args.output_dir),
                          heat, scoring_affine)
+
+            # Of the large-vessel false negatives, the share the model did
+            # segment and the truncation then removed: a vessel the prediction
+            # calls half a voxel thinner than the reference falls under the
+            # floor, leaves with its whole subtree by the closure, and shows up
+            # as a miss it is not. High here means dice_large is reading the
+            # cut as much as the model -- see --min-diameter and the gap
+            # between n_segments_kept_reference and _prediction.
+            reference_large, prediction_large = moved["large"]
+            missed = reference_large & ~prediction_large
+            row["fn_large_segmented_but_cut"] = (
+                float((missed & prediction_whole).sum()) / float(missed.sum())
+                if missed.any() else 0.0)
 
             reference_row = cut_rows.get((name, entry["label"]), {})
             prediction_row = cut_rows.get((name, prediction_file), {})
