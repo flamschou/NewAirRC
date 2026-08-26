@@ -192,6 +192,165 @@ equivalent flag for model B). `--skip-surface` / `--skip-topology`
 drop the slower metrics (NSD/HD95/ASD and component counts,
 respectively) if you just want a quick Dice + volume pass first.
 
+## Cutting a segmentation back to its large vessels
+
+A whole-tree Dice is dominated by the periphery: the subsegmental vessels
+carry most of the surface and almost none of the volume, they are where the
+reference itself is least certain, and a model that draws the hilum
+perfectly but fades out two generations early scores about the same as one
+that does the opposite.
+
+`truncate.py` cuts a segmentation back to its proximal tree -- trunk, lobar
+and segmental vessels -- and writes the truncated mask. It computes no
+metric: it writes masks, and the masks go to whatever already scores them
+(`compare_predictions.py`, or the validation loop). Run it on the
+references **and** on the predictions, with the same `--min-diameter`, so
+both sides are cut by the same rule -- a truncated reference scored against
+a whole prediction would count every peripheral vessel of the prediction as
+a false positive.
+
+The mask is skeletonized and measured exactly as `centerline.py` does it,
+then the tree is truncated: a branch has to clear `--min-diameter` (default
+4 mm, which keeps the segmental vessels and drops the generation below), and
+what is kept is the connected group of such branches that contains the
+**widest branch of the tree**. Clearing the floor is necessary and not
+sufficient, which is what makes this a truncation rather than a calibre
+filter: a wide distal blob sitting behind a thin branch -- a leak, a fused
+vein -- cannot reach the trunk through large vessels, so it goes with the
+branch that carries it.
+
+Growing from the widest branch rather than down from the root is deliberate.
+The root is chosen upstream as the widest free *end* of the skeleton
+(`centerline.order_branches`), which is the trunk in a clean mask and
+anywhere at all in a degraded one: on an eroded venous prediction here it
+landed on a 5 mm peripheral stump whose daughters measured 3.83 mm, the real
+37 mm trunk sat six generations "below" it, and a root-first traversal kept
+1 segment out of 203. Seeding from the widest branch cannot fail that way,
+and it returns exactly the same cut whenever the root is right.
+
+The truncated tree becomes voxels again through a Voronoi partition of the
+mask by its own skeleton: a voxel is kept when its nearest centerline node
+belongs to a kept branch and sits within `--sleeve` local radii (1.5 by
+default). The cut surface therefore falls where the tree was truncated,
+roughly normal to the vessel, and a subsegmental vessel running along the
+trunk is claimed by its own centerline instead of surviving because it
+happens to touch a large one.
+
+What comes out carries the input's own label values on the input grid, so
+it is a drop-in replacement for the file it came from:
+
+```bash
+# one class of one mask -> vascular_case001_large.nii.gz beside it
+python truncate.py --input vascular_case001.nii.gz --label 3
+
+# every foreground class of config.LABEL_CLASS_MAP, each on its own tree,
+# into one file (raw 3 = artery, 4 = vein, airway classes 1-2 dropped)
+python truncate.py --input vascular_case001.nii.gz --classes
+
+# the labels of a manifest split
+python truncate.py --manifest manifest_ct.json --split val --output-dir cut/
+
+# the predictions that go with them, cut by the same rule
+python truncate.py --input-dir /data/flamant/data/ct/lidc_idri \
+                   --pattern '*_vascular_pred.nii.gz' --classes
+```
+
+Each class is truncated on its own tree -- the union of the arterial and the
+venous tree is not a tree, and skeletonizing it would order the two against
+each other. Files already carrying `--suffix` are skipped by `--input-dir`,
+and a file whose output exists is skipped unless `--overwrite` is given, so
+an interrupted run resumes. `--csv` records what was cut out of each file:
+segments and centerline length kept, volume kept, and the floor that was
+applied.
+
+Every mask is written with a `<stem>_large.json` sidecar holding the rule it
+was cut by -- the floor, the sleeve, the classes, the skeleton settings. A
+filename cannot carry that (`..._large.nii.gz` is the name of a 4 mm cut of
+the artery and of a 6 mm cut of both trees alike), and `compute_dice.py`
+reads the sidecar to decide whether a cut already on disk is the one being
+asked for.
+
+The floor is what "large vessel" means here, so report it with whatever the
+truncated masks end up scoring, and use `--suffix` to keep two floors side
+by side (`--min-diameter 6 --suffix _large6mm`). `--max-generation` (depth
+from the root) and `--min-strahler` (order counted up from the tips) are
+available as extra cuts, both off by default -- the depth of a branch is a
+property of the skeleton's topology, which one missed junction changes,
+whereas its calibre is a measurement.
+
+## Dice on the whole tree and on the large vessels
+
+`compute_dice.py` scores a checkpoint's predictions against the references
+of a manifest split, twice: on the whole tree, and on the large vessels
+alone.
+
+```bash
+# predictions already produced by inference.py
+python compute_dice.py --manifest manifest_ct.json --split val --csv dice.csv
+
+# or straight from the checkpoint, predicting whatever is missing on the way
+python compute_dice.py --manifest manifest_ct.json --split val \
+                       --checkpoint "$DATASET_ROOT/checkpoints/.../last.ckpt" \
+                       --csv dice.csv
+
+python compute_dice.py --manifest manifest_ct.json --classes artery vein \
+                       --output-dir results/ --min-diameter 6
+```
+
+Predictions are read off the disk, where `inference.py` writes them
+(`<image stem>_vascular_pred.nii.gz`, or under `--pred-dir`). With
+`--checkpoint`, the missing ones are produced here first, through
+inference.py's own sliding window and preprocessing, so the split can be
+scored in one command -- and only the missing ones: a prediction already on
+disk is reused and never overwritten, since it is the thing being measured
+and regenerating it halfway through a cohort would change what the cohort
+means. The checkpoint is loaded lazily, so a run over predictions that all
+exist never pays for torch at all. `--cpu` forces the inference off the GPU;
+a CUDA out-of-memory falls back to the CPU by itself, as in `inference.py`.
+
+Going through `compute_dice.py --checkpoint` rather than
+`inference.py --input-dir` also avoids a trap: `--input-dir` globs every
+`*.nii.gz` under the directory and only excludes the files already carrying
+the prediction suffix, so it will happily run the model on your label
+volumes. The manifest says which files are images.
+
+The large-vessel pass truncates **both sides** with the same rule and writes
+the truncated masks out (`truncate.py` does the cutting, sidecar included),
+so the number can be traced back to the volumes it was read on. Cutting only
+the reference would count every peripheral vessel of the prediction as a
+false positive, and the Dice would measure the truncation rather than the
+model. Cutting the prediction with its own tree does mean a prediction whose
+trunk is broken gets a different truncation from the reference's -- that is
+the failure showing up, not a defect of the metric, but it is why each row
+keeps `n_segments_kept_reference` next to `n_segments_kept_prediction`: a
+case where those two disagree wildly is a case to look at before quoting its
+Dice.
+
+Two volumes are written per pass, to say **where** the two masks differ:
+
+- `<case>_<class>_errors_{full,large}.nii.gz` -- a label map, 1 = agreement,
+  2 = predicted only (false positive), 3 = reference only (false negative).
+  Exact, no parameter, opens straight into Slicer as a segmentation.
+- `<case>_<class>_localdice_{full,large}.nii.gz` -- the local Dice: at every
+  voxel, the Dice of the two masks inside a `--heat-window` cube (20 mm by
+  default) around it, computed with box filters. It is the global Dice
+  decomposed in space, so **low is bad** -- the opposite convention from the
+  error map, do not read the two with the same colour scale. NaN where there
+  is not enough vessel in the window to divide by.
+
+`local_dice_p10` and `local_dice_median` in the CSV are that map read at the
+mask voxels themselves -- how bad the bad regions are, next to the single
+average the Dice reports. They are not taken over the whole field: the map
+extends a window's reach around the masks, so most voxels carrying a value
+sit in the fringe where the window catches a vessel by its edge, and the
+median over the field reads 0.0 next to a global Dice of 0.8.
+
+`--swap-av` corrects a checkpoint trained with the inverted artery/vein
+convention, by reading the artery out of the vein index rather than by
+rewriting anything. Truncated masks already on disk are reused when their
+sidecar matches the current settings, so a second run -- different maps, a
+different window -- costs seconds instead of re-skeletonizing.
+
 ## Extracting a centerline
 
 `centerline.py` extracts the centerline (curve-skeleton) of a pulmonary
