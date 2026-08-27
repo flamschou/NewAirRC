@@ -27,8 +27,11 @@ vessel: half a voxel of partial volume and the same segmental artery measures
 leaves it in one tree and drops it -- with its whole subtree -- from the
 other. Each side is cut twice: the plain rule first, then again with a
 tolerance band of --rescue-margin under the floor, in which a branch is kept
-when --rescue-coverage of it lies inside the other side's first cut (see
-`truncate.py: truncate_pair`). It runs both ways, though in practice it is
+when --rescue-coverage of its centerline runs along a branch the other side
+kept in its first pass -- a correspondence between axes, not an overlap of
+masks, because what a side keeps is a tube of --sleeve local radii and the
+tube around a trunk is wide enough to swallow any thin vessel beside it (see
+`truncate.py: centerline_support`). It runs both ways, though in practice it is
 mostly the prediction -- smoother and a touch thinner than the reference it
 was trained on -- that loses branches to the floor. The rescue adds where the
 two already agree, so it mostly raises dice_large: `n_segments_rescued_*` and
@@ -609,8 +612,16 @@ def build_parser():
                              "rescued branch still hangs off one that cleared the floor. 0 cuts "
                              "each side strictly on its own tree. Default: 1.0")
     rescue.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION",
-                        help="How much of a branch in that band must lie inside the other side's "
-                             "cut for the two to be the same vessel. Default: 0.5")
+                        help="How much of a branch in that band must run along a branch the other "
+                             "side kept, for the two to be the same vessel. Read on the "
+                             "centerlines: a mask overlap cannot tell a vessel from its large "
+                             "neighbour, whose sleeve it sits inside. Default: 0.5")
+    rescue.add_argument("--rescue-distance", type=float, default=1.0, metavar="RADII",
+                        help="How far the other side's axis may sit from a branch's own, in that "
+                             "branch's local radii, and still be the same vessel. The nearest "
+                             "centerline of the other side decides, dropped branches included, so "
+                             "a vessel it has and cut answers for itself instead of handing the "
+                             "question to the nearest trunk. Default: 1.0")
 
     maps = parser.add_argument_group("where the two masks differ")
     maps.add_argument("--no-errors", action="store_true",
@@ -699,8 +710,9 @@ def main():
         #
         # Each side is still CUT on its own grid: the skeleton deserves the
         # resolution its file was written at, and a `_large` mask sitting
-        # next to its source should have its source's geometry. Only the
-        # rescue's support mask crosses, inside `truncate_pair`.
+        # next to its source should have its source's geometry. Nothing is
+        # resampled to cut them against each other either -- `truncate_pair`
+        # matches the two centerlines in world millimetres.
         regrid = not (reference_data.shape == prediction_data.shape
                       and np.allclose(affine, prediction_affine, atol=1e-3))
         scoring_affine = prediction_affine if regrid else affine
