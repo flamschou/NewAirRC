@@ -107,6 +107,27 @@ def class_mask(data, values=None):
     return np.ascontiguousarray(mask, dtype=bool)
 
 
+def to_grid(mask, affine, target_shape, target_affine):
+    """
+    Nearest-neighbour resample of a boolean mask onto another grid, by affine.
+
+    Two masks of the same case need not be sampled the same way -- a
+    reference comes out of the generator, a prediction out of
+    `inference.py`, which maps its output back onto the IMAGE -- and a
+    viewer hides it, overlaying in world coordinates so two volumes
+    describing the same anatomy superimpose perfectly while their arrays
+    have different shapes. Anything read element by element needs one grid.
+
+    Nearest neighbour, never an interpolation: an averaged label value is
+    not a label.
+    """
+    from nibabel.processing import resample_from_to
+
+    image = nib.Nifti1Image(mask.astype(np.uint8), affine)
+    resampled = resample_from_to(image, (tuple(target_shape), target_affine), order=0, cval=0)
+    return np.asarray(resampled.dataobj) > 0
+
+
 # --------------------------------------------------------------------------- #
 # tree
 # --------------------------------------------------------------------------- #
@@ -142,7 +163,7 @@ def extract_tree(mask, affine, spacing, args, verbose=True):
 
 
 def select_branches(table, min_diameter, max_generation=None, ordering="generation",
-                    min_strahler=None):
+                    min_strahler=None, margin=0.0, supported=None):
     """
     The branches that are still a large vessel: the trunk, and everything
     reachable from it through vessels that are themselves large.
@@ -174,15 +195,40 @@ def select_branches(table, min_diameter, max_generation=None, ordering="generati
     at 4 mm kept 1 segment out of 203. Growing from the widest branch cannot
     fail that way, and it agrees with the root-first traversal whenever the
     root is right.
+
+    `margin` opens a tolerance band under the floor: a branch whose diameter
+    falls within `margin` mm of `min_diameter` is admitted anyway when
+    `supported(branch_id)` says so -- in `truncate_pair`, when the other
+    side of a comparison kept that same vessel. `min_diameter` is a floor on
+    a MEASUREMENT of a segmentation and not on the vessel, and half a voxel
+    of partial volume moves a segmental artery either side of it. The band
+    is only ever entered through the closure, so a rescued branch still has
+    to hang off something that cleared the floor on its own, and the
+    branches beyond it rejoin by the ordinary rule -- what comes back is the
+    subtree, not the one borderline segment.
+
+    The seed is never rescued: a tree whose widest branch is under the floor
+    has nothing to grow from, and no support makes that a truncation.
     """
-    def qualifies(entry):
-        if 2.0 * entry["calibre_mm"] < min_diameter:
-            return False
+    def in_limits(entry):
         if max_generation is not None and not 0 <= entry[ordering] <= max_generation:
             return False
         if min_strahler is not None and entry["strahler_dd"] < min_strahler:
             return False
         return True
+
+    def qualifies(entry):
+        return 2.0 * entry["calibre_mm"] >= min_diameter and in_limits(entry)
+
+    def admissible(entry):
+        if qualifies(entry):
+            return True
+        # fails on the calibre alone, and only just
+        if supported is None or margin <= 0.0:
+            return False
+        if 2.0 * entry["calibre_mm"] < min_diameter - margin:
+            return False
+        return in_limits(entry) and supported(entry["branch_id"])
 
     seed = max(table, key=lambda entry: entry["calibre_mm"])
     if not qualifies(seed):
@@ -201,57 +247,60 @@ def select_branches(table, min_diameter, max_generation=None, ordering="generati
         entry = table[queue.popleft()]
         for end in (entry["nodes"][0], entry["nodes"][-1]):
             for neighbour in at_node[end]:
-                if neighbour not in keep and qualifies(table[neighbour]):
+                if neighbour not in keep and admissible(table[neighbour]):
                     keep.add(neighbour)
                     queue.append(neighbour)
     return keep
 
 
-def keep_voxels(mask, affine, tree, keep, sleeve):
+def voxel_owners(mask, affine, tree, sleeve):
     """
-    The voxels the truncated tree owns, as a boolean volume on the input grid.
+    Which centerline node each voxel of the mask belongs to, and whether it
+    is close enough to it to be kept by anything at all.
 
-    A voxel is kept when the nearest centerline node of the WHOLE tree --
-    kept branches and dropped ones alike -- is one of the kept ones, and
-    when it lies within `sleeve` times that node's own radius. Both halves
-    matter: the first is the Voronoi partition that puts the cut where the
-    tree was truncated and gives every dropped vessel a chance to claim its
-    own voxels back, the second drops what the skeleton never covered -- a
-    blob the thinning walked past, and the components the pruning removed.
+    A Voronoi partition of the mask by its own skeleton, over the WHOLE tree
+    -- kept branches and dropped ones alike. That is what puts the cut where
+    the tree was truncated, roughly normal to the vessel instead of on an
+    arbitrary plane, and what lets every dropped branch compete for its own
+    voxels, so a subsegmental running along the trunk does not survive
+    because it happens to touch a large vessel.
 
-    The sleeve is proportional rather than a fixed millimetre tolerance: a
-    voxel of a wide vessel sits further from its axis than a voxel of a thin
-    one, so a fixed distance would either cut into the trunk or reach past
-    the segmentals.
+    `within` is the other half of the rule: a voxel sitting further than
+    `sleeve` times its node's own radius is kept by no branch. It drops what
+    the skeleton never covered -- a blob the thinning walked past, the
+    components the pruning removed. The sleeve is proportional rather than a
+    fixed millimetre tolerance: a voxel of a wide vessel sits further from
+    its axis than a voxel of a thin one, so a fixed distance would either
+    cut into the trunk or reach past the segmentals.
 
     Only the mask's own voxels are queried -- a nearest-neighbour lookup
     over a whole 512^3 volume costs minutes and answers nothing, since a
-    background voxel is not written either way.
+    background voxel is not written either way. The node coordinates are the
+    raw (unsmoothed) skeleton ones: smoothing is for measuring lengths and
+    angles, and here the axis has to stay where the voxels are.
     """
-    kept = np.zeros(mask.shape, dtype=bool)
     voxels = np.argwhere(mask)
-    if not keep or not len(voxels):
-        return kept
-
+    if not len(voxels):
+        return voxels, np.zeros(0, dtype=int), np.zeros(0, dtype=bool)
     nodes = np.unique(np.concatenate([entry["nodes"] for entry in tree["table"]]))
-    is_kept = np.zeros(len(tree["world"]), dtype=bool)
-    is_kept[np.concatenate([tree["table"][b]["nodes"] for b in keep])] = True
-
-    # The node coordinates are the raw (unsmoothed) skeleton ones: smoothing
-    # is for measuring lengths and angles, and here the axis has to stay
-    # where the voxels are.
     points = voxels @ affine[:3, :3].T + affine[:3, 3]
     distance, index = cKDTree(tree["world"][nodes]).query(points)
     owner = nodes[index]
-    kept[tuple(voxels.T)] = is_kept[owner] & (distance <= sleeve * tree["radii"][owner])
-    return kept
+    return voxels, owner, distance <= sleeve * tree["radii"][owner]
 
 
-def truncate_class(mask, affine, spacing, args, verbose=True):
+def plan_cut(mask, affine, spacing, args, verbose=True):
     """
-    Truncates one class. Returns (kept mask, row) or (None, row) when the
-    tree could not be built -- the caller decides whether one unusable class
-    is worth losing the file over.
+    Everything about one class that does not depend on where the floor
+    falls: the ordered tree, and the voxel each of its nodes owns.
+
+    Split off from the selection because a pair of masks cut against each
+    other (`truncate_pair`) selects twice on the same tree, and the
+    skeletonization is the expensive half by a wide margin.
+
+    Returns (plan, row), the plan being None when nothing survives the
+    pruning -- the caller decides whether one unusable class is worth losing
+    the file over.
     """
     voxel_ml = float(np.prod(spacing)) / 1000.0
     row = {"min_diameter_mm": args.min_diameter, "sleeve": args.sleeve,
@@ -265,21 +314,75 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
         print("  WARNING: nothing left after pruning, the class is dropped")
         return None, row
 
-    table = tree["table"]
-    keep = select_branches(table, args.min_diameter, args.max_generation, args.ordering,
-                           args.min_strahler)
+    voxels, owner, within = voxel_owners(mask, affine, tree, args.sleeve)
+    # Which branch each owned voxel belongs to, for `branch_coverage` alone.
+    # A junction node is shared by several branches and lands on whichever
+    # writes last: it is a statistic over a branch's voxels, not a decision
+    # about them -- `keep_voxels` marks nodes, and keeps a shared one as
+    # soon as any kept branch contains it.
+    branch_of_node = np.full(len(tree["world"]), -1, dtype=int)
+    for entry in tree["table"]:
+        branch_of_node[entry["nodes"]] = entry["branch_id"]
+    plan = {"tree": tree, "shape": mask.shape, "voxel_ml": voxel_ml, "voxels": voxels,
+            "owner": owner, "within": within, "branch": branch_of_node[owner]}
+    return plan, row
+
+
+def keep_voxels(plan, keep):
+    """The voxels a selection of branches owns, as a boolean volume on the input grid."""
+    kept = np.zeros(plan["shape"], dtype=bool)
+    if not keep or not len(plan["voxels"]):
+        return kept
+    table = plan["tree"]["table"]
+    is_kept = np.zeros(len(plan["tree"]["world"]), dtype=bool)
+    is_kept[np.concatenate([table[b]["nodes"] for b in keep])] = True
+    kept[tuple(plan["voxels"].T)] = is_kept[plan["owner"]] & plan["within"]
+    return kept
+
+
+def branch_coverage(plan, other):
+    """
+    Per branch, the share of the voxels it owns that `other` holds too.
+
+    `other` is the other side's mask, already resampled onto this plan's
+    grid. It is asked of the branch's OWN voxels rather than of the two
+    masks at large, because the question is about one vessel: whether the
+    other side drew the thing this branch runs through, not whether the two
+    segmentations agree around there. A branch owning no voxel -- everything
+    it might have claimed lies outside its sleeve -- scores 0.
+    """
+    table = plan["tree"]["table"]
+    coverage = np.zeros(len(table), dtype=float)
+    take = plan["within"]
+    if not take.any():
+        return coverage
+    branch = plan["branch"][take]
+    voxels = plan["voxels"][take]
+    inside = other[tuple(voxels.T)].astype(float)
+    total = np.bincount(branch, minlength=len(table)).astype(float)
+    held = np.bincount(branch, weights=inside, minlength=len(table))
+    np.divide(held, total, out=coverage, where=total > 0)
+    return coverage
+
+
+def warn_if_empty(table, keep, min_diameter):
+    """The trunk itself is under the floor: the floor is wrong for this
+    volume, or the root landed on a fragment."""
     if not keep:
-        # the trunk itself is under the floor: the floor is wrong for this
-        # volume, or the root landed on a fragment
         widest = max(2.0 * entry["calibre_mm"] for entry in table)
-        print(f"  WARNING: no branch clears {args.min_diameter} mm (widest is {widest:.2f} mm), "
+        print(f"  WARNING: no branch clears {min_diameter} mm (widest is {widest:.2f} mm), "
               f"the cut is empty")
 
-    kept = keep_voxels(mask, affine, tree, keep, args.sleeve)
+
+def cut_plan(plan, keep, row, verbose=True):
+    """The mask of one selection, with what it kept written into `row`."""
+    table = plan["tree"]["table"]
+    kept = keep_voxels(plan, keep)
     diameters = [2.0 * table[b]["calibre_mm"] for b in keep]
     row.update({
-        "large_ml": float(kept.sum() * voxel_ml),
-        "large_volume_fraction": float(kept.sum()) / float(mask.sum()) if mask.any() else 0.0,
+        "large_ml": float(kept.sum() * plan["voxel_ml"]),
+        "large_volume_fraction": (float(kept.sum()) / float(len(plan["voxels"]))
+                                  if len(plan["voxels"]) else 0.0),
         "n_segments": len(table),
         "n_segments_kept": len(keep),
         "centerline_mm": sum(entry["length_mm"] for entry in table),
@@ -292,13 +395,34 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
               f"{row['centerline_kept_mm']:.0f}/{row['centerline_mm']:.0f} mm of centerline, "
               f"{row['large_ml']:.2f}/{row['volume_ml']:.2f} mL "
               f"({row['large_volume_fraction']:.1%} of the volume)")
-    return kept, row
+    return kept
+
+
+def truncate_class(mask, affine, spacing, args, verbose=True):
+    """
+    Truncates one class on its own tree alone. Returns (kept mask, row) or
+    (None, row) when the tree could not be built -- the caller decides
+    whether one unusable class is worth losing the file over.
+    """
+    plan, row = plan_cut(mask, affine, spacing, args, verbose=verbose)
+    if plan is None:
+        return None, row
+    keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
+                           args.ordering, args.min_strahler)
+    warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+    return cut_plan(plan, keep, row, verbose=verbose), row
 
 
 # --------------------------------------------------------------------------- #
 # files
 # --------------------------------------------------------------------------- #
-def cut_settings(classes, args, source=None):
+def fingerprint(path):
+    """A file's identity for a sidecar: name, size and modification time."""
+    stat = os.stat(path)
+    return {"path": os.path.basename(path), "bytes": stat.st_size, "mtime": round(stat.st_mtime, 3)}
+
+
+def cut_settings(classes, args, source=None, counterpart=None):
     """
     The rule a cut was made by, written beside the mask it produced.
 
@@ -316,6 +440,13 @@ def cut_settings(classes, args, source=None):
     reference resampled onto the image grid, a prediction regenerated from
     another checkpoint -- and everything about the rule still matches while
     the cut on disk no longer belongs to the file next to it.
+
+    `counterpart` is the file this one was cut AGAINST, for a cut made by
+    `truncate_pair`: with a rescue margin the cut depends on the other side
+    as much as on the rule, so the other side gets fingerprinted too and a
+    cut outlives neither. A margin of 0 makes no use of the counterpart and
+    records none, which is what makes such a cut interchangeable with a
+    standalone one.
     """
     settings = {
         "classes": {name: (list(values) if values else None) for name, values in classes},
@@ -336,9 +467,14 @@ def cut_settings(classes, args, source=None):
         "root": list(args.root) if args.root else None,
     }
     if source is not None and os.path.exists(source):
-        stat = os.stat(source)
-        settings["source"] = {"path": os.path.basename(source), "bytes": stat.st_size,
-                              "mtime": round(stat.st_mtime, 3)}
+        settings["source"] = fingerprint(source)
+    margin = getattr(args, "rescue_margin", 0.0) if counterpart else 0.0
+    settings["rescue"] = None if not margin else {
+        "margin_mm": margin,
+        "coverage": args.rescue_coverage,
+        "against": fingerprint(counterpart) if os.path.exists(counterpart)
+        else os.path.basename(counterpart),
+    }
     return settings
 
 
@@ -392,16 +528,164 @@ def truncate_file(path, classes, args, destination=None):
             output[kept] = data[kept]
 
     destination = destination or output_path(path, args.suffix, args.output_dir)
+    write_cut(path, output, affine, classes, destination, args)
+    for row in rows:
+        row["output"] = destination
+    return rows, kept_by_class
+
+
+def write_cut(path, output, affine, classes, destination, args, counterpart=None):
+    """The truncated volume and the sidecar saying by which rule it was cut."""
     directory = os.path.dirname(destination)
     if directory:
         os.makedirs(directory, exist_ok=True)
     nib.save(nib.Nifti1Image(output, affine), destination)
     with open(settings_path(destination), "w") as handle:
-        json.dump(cut_settings(classes, args, path), handle, indent=1, sort_keys=True)
+        json.dump(cut_settings(classes, args, path, counterpart), handle, indent=1, sort_keys=True)
     print(f"  wrote {destination}")
-    for row in rows:
-        row["output"] = destination
-    return rows, kept_by_class
+
+
+def truncate_pair(reference_path, reference_classes, prediction_path, prediction_classes, args,
+                  destinations=(None, None), verbose=True):
+    """
+    Cuts two masks of the same case, each on its own tree and by the same
+    rule, letting each side keep the branches the floor only just cut off
+    the other one has.
+
+    Why the two cuts are made together. `--min-diameter` is a floor on a
+    MEASUREMENT of a segmentation, not on the vessel: half a voxel of
+    partial volume, a wall the model drew one voxel thin, and the same
+    segmental artery measures 4.1 mm in the reference and 3.9 mm in the
+    prediction. Cut independently it stays in one tree and leaves the other
+    with its whole subtree behind it, and a Dice read on the two then
+    reports as a miss what is a rounding difference on the cut. The effect
+    is not symmetric in practice -- a prediction is smoother and a touch
+    thinner than the reference it was trained on, so it is mostly the
+    prediction that loses branches -- but nothing here assumes that, and the
+    rescue runs both ways.
+
+    So each side is cut twice. The first pass is the plain rule, and it is
+    what the other side is judged against; the second re-selects with a
+    tolerance band of `--rescue-margin` under the floor, admitting a branch
+    that falls in it when `--rescue-coverage` of the voxels it owns lie
+    inside the OTHER side's first-pass cut. The support is always that first
+    pass and never the rescued one: two sides feeding each other would walk
+    a chain of sub-threshold vessels arbitrarily far into the periphery, one
+    margin at a time, and the floor would stop meaning anything.
+
+    A rescued branch is still only reached through the closure -- it has to
+    hang off something that cleared the floor on its own -- and the branches
+    beyond it rejoin by the ordinary rule, which is the point: what comes
+    back is the subtree, not the one borderline segment.
+
+    Reading what this produces: the rescue can only ADD to a cut, and it
+    adds where the two sides already agree, so it mostly raises the Dice.
+    `n_segments_rescued` and `rescued_ml`, on every row, say how much of the
+    number rests on it; --rescue-margin 0 is the cut without it.
+
+    Returns (rows, reference masks, prediction masks), the masks per class so
+    a caller that has to score the truncation does not read the files it
+    just watched being written.
+    """
+    if [name for name, _ in reference_classes] != [name for name, _ in prediction_classes]:
+        raise ValueError("the two sides of a pair must name the same classes, in the same order")
+
+    sides = []
+    for role, path, classes, destination in (
+            ("reference", reference_path, reference_classes, destinations[0]),
+            ("prediction", prediction_path, prediction_classes, destinations[1])):
+        data, affine, spacing = read_volume(path)
+        sides.append({"role": role, "path": path, "classes": classes, "data": data,
+                      "affine": affine, "spacing": spacing, "kept": {}, "rows": [],
+                      "output": np.zeros_like(data),
+                      "destination": destination or output_path(path, args.suffix, args.output_dir)})
+
+    # The support mask has to be read on the grid of the side being rescued.
+    # Each side is still CUT on its own grid: the skeleton deserves the
+    # resolution its file was written at, and a cut mask sitting next to its
+    # source should have its source's geometry.
+    same_grid = (sides[0]["data"].shape == sides[1]["data"].shape
+                 and np.allclose(sides[0]["affine"], sides[1]["affine"], atol=1e-3))
+
+    for name, _ in reference_classes:
+        plans, rows = [], []
+        for side in sides:
+            values = dict(side["classes"])[name]
+            mask = class_mask(side["data"], values)
+            print(f"{os.path.basename(side['path'])} [{name}]")
+            side["kept"][name] = np.zeros(side["data"].shape, dtype=bool)
+            if not mask.any():
+                print(f"  WARNING: no voxel with label {values}, skipping")
+                plans.append(None)
+                rows.append(None)
+                continue
+            plan, row = plan_cut(mask, side["affine"], side["spacing"], args, verbose=verbose)
+            row.update(file=side["path"], **{"class": name})
+            side["rows"].append(row)
+            plans.append(plan)
+            rows.append(row)
+
+        # first pass, the plain rule, on both sides: what the rescue is judged against
+        plain, first = [], []
+        for plan in plans:
+            if plan is None:
+                plain.append(set())
+                first.append(None)
+                continue
+            keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
+                                   args.ordering, args.min_strahler)
+            warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+            plain.append(keep)
+            first.append(keep_voxels(plan, keep))
+
+        # second pass, each side against the other's first
+        for index, (side, plan) in enumerate(zip(sides, plans)):
+            if plan is None:
+                continue
+            other, other_side = first[1 - index], sides[1 - index]
+            keep, rescued = plain[index], set()
+            if args.rescue_margin > 0 and other is not None and other.any():
+                support = other if same_grid else to_grid(
+                    other, other_side["affine"], plan["shape"], side["affine"])
+                coverage = branch_coverage(plan, support)
+                keep = select_branches(
+                    plan["tree"]["table"], args.min_diameter, args.max_generation, args.ordering,
+                    args.min_strahler, margin=args.rescue_margin,
+                    supported=lambda branch: coverage[branch] >= args.rescue_coverage)
+                rescued = keep - plain[index]
+
+            row = rows[index]
+            kept = cut_plan(plan, keep, row, verbose=verbose)
+            row["rescue_margin_mm"] = args.rescue_margin
+            row["rescue_coverage"] = args.rescue_coverage
+            row["n_segments_rescued"] = len(rescued)
+            row["rescued_ml"] = float(kept.sum() - first[index].sum()) * plan["voxel_ml"]
+            # what the band admitted, and what rejoined behind it by the
+            # ordinary rule -- the second is the point of the first, and
+            # counting them together would read as a much wider tolerance
+            table = plan["tree"]["table"]
+            in_band = sorted(2.0 * table[b]["calibre_mm"] for b in rescued
+                             if 2.0 * table[b]["calibre_mm"] < args.min_diameter)
+            row["n_segments_in_band"] = len(in_band)
+            if rescued and verbose:
+                behind = len(rescued) - len(in_band)
+                print(f"  rescued {len(in_band)} branch(es) in the "
+                      f"{args.min_diameter - args.rescue_margin}-{args.min_diameter} mm band the "
+                      f"{other_side['role']} holds too"
+                      + (f" ({in_band[0]:.2f}-{in_band[-1]:.2f} mm)" if in_band else "")
+                      + (f", and {behind} behind them" if behind else "")
+                      + f": +{row['rescued_ml']:.2f} mL")
+            side["kept"][name] = kept
+            side["output"][kept] = side["data"][kept]
+
+    rows = []
+    for index, side in enumerate(sides):
+        write_cut(side["path"], side["output"], side["affine"], side["classes"],
+                  side["destination"], args, sides[1 - index]["path"])
+        for row in side["rows"]:
+            row["output"] = side["destination"]
+        rows.extend(side["rows"])
+    return rows, sides[0]["kept"], sides[1]["kept"]
 
 
 def resolve_classes(args):

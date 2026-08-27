@@ -20,6 +20,21 @@ two truncations side by side (`kept_ml_reference` against `kept_ml_prediction`,
 `n_segments_kept_*`): a case where they disagree wildly is a case to look at
 before quoting its Dice.
 
+The two cuts are therefore made against each other rather than one after the
+other, because --min-diameter is a floor on a MEASUREMENT and not on the
+vessel: half a voxel of partial volume and the same segmental artery measures
+4.1 mm in the reference and 3.9 mm in the prediction, which cut independently
+leaves it in one tree and drops it -- with its whole subtree -- from the
+other. Each side is cut twice: the plain rule first, then again with a
+tolerance band of --rescue-margin under the floor, in which a branch is kept
+when --rescue-coverage of it lies inside the other side's first cut (see
+`truncate.py: truncate_pair`). It runs both ways, though in practice it is
+mostly the prediction -- smoother and a touch thinner than the reference it
+was trained on -- that loses branches to the floor. The rescue adds where the
+two already agree, so it mostly raises dice_large: `n_segments_rescued_*` and
+`rescued_ml_*` say how much of the number rests on it, and --rescue-margin 0
+is the number without it.
+
 Two volumes are written per pass, to say WHERE the two masks differ:
 
     --errors  a label map, 1 = agreement, 2 = predicted only (false
@@ -60,6 +75,9 @@ Usage:
 
     python compute_dice.py --manifest manifest_ct.json --classes artery vein \
                            --output-dir results/ --min-diameter 6
+
+    # the cut alone, each side judged strictly on its own tree
+    python compute_dice.py --manifest manifest_ct.json --rescue-margin 0
 """
 import argparse
 import collections
@@ -74,7 +92,8 @@ from scipy.ndimage import uniform_filter
 
 import config as cfg
 from truncate import (SUFFIX, add_cut_arguments, add_skeleton_arguments, class_mask,
-                      cut_settings, output_path, read_volume, settings_path, truncate_file)
+                      cut_settings, output_path, read_volume, settings_path, to_grid,
+                      truncate_pair)
 from centerline import DIRECTION_OFFSET
 
 # What inference.py appends to the image stem. Kept as a literal rather than
@@ -180,37 +199,6 @@ def score(reference, prediction, spacing, args):
 # --------------------------------------------------------------------------- #
 # files
 # --------------------------------------------------------------------------- #
-def to_grid(mask, affine, target_shape, target_affine):
-    """
-    Nearest-neighbour resample of a boolean mask onto another grid, by affine.
-
-    The reference and the prediction need not be sampled the same way: the
-    labels come out of the generator, the synthetic images out of a second
-    pipeline, and `inference.py` maps its output back onto the IMAGE. A
-    viewer hides this -- it overlays in world coordinates and resamples for
-    display, so two volumes describing the same anatomy superimpose
-    perfectly while their arrays have different shapes -- but a Dice is read
-    element by element and needs one grid.
-
-    The reference is the side that moves, onto the prediction's grid, for
-    two reasons. It is what training compares against
-    (`transforms.py`: Spacingd on the image, then
-    `ResampleToMatchd(keys=["label"], key_dst="image", mode="nearest")`), so
-    the metric is read in the space the model was asked to answer in. And it
-    is the direction that cannot invent errors: were the prediction moved
-    onto a reference covering more ground, everything the model was never
-    shown would come back as a false negative.
-
-    Nearest neighbour, never an interpolation: an averaged label value is
-    not a label.
-    """
-    from nibabel.processing import resample_from_to
-
-    image = nib.Nifti1Image(mask.astype(np.uint8), affine)
-    resampled = resample_from_to(image, (tuple(target_shape), target_affine), order=0, cval=0)
-    return np.asarray(resampled.dataobj) > 0
-
-
 def outside_fraction(mask, affine, target_shape, target_affine):
     """
     The share of a mask that falls outside another grid's field of view.
@@ -432,7 +420,7 @@ def class_pairs(names, swap_av=False):
     return pairs
 
 
-def reusable(destination, classes, args, source):
+def reusable(destination, classes, args, source, counterpart=None):
     """
     Whether the cut already on disk was made by the rule being asked for.
 
@@ -444,43 +432,65 @@ def reusable(destination, classes, args, source):
     from, so a mask rewritten under the same name -- a reference resampled
     onto the image grid, a prediction from another checkpoint -- invalidates
     its cut instead of quietly outliving it. No sidecar, no reuse.
+
+    `counterpart` is the other side of the pair the cut was made against,
+    which the sidecar fingerprints too: a rescued cut belongs to the file it
+    was rescued against as much as to the file it was cut from.
     """
     sidecar = settings_path(destination)
     if not (os.path.exists(destination) and os.path.exists(sidecar)):
         return False, "not cut yet"
     with open(sidecar) as handle:
         stored = json.load(handle)
-    wanted = cut_settings(classes, args, source)
+    wanted = cut_settings(classes, args, source, counterpart)
     if stored == wanted:
         return True, ""
     differing = sorted(key for key in set(stored) | set(wanted)
                        if stored.get(key) != wanted.get(key))
     if differing == ["source"]:
         return False, "cut from an older version of the file"
+    if differing == ["rescue"] and stored.get("rescue") and wanted.get("rescue") and all(
+            stored["rescue"].get(key) == value
+            for key, value in wanted["rescue"].items() if key != "against"):
+        return False, "cut against an older version of the other side"
     return False, "cut by another rule (" + ", ".join(differing) + ")"
 
 
-def truncated(path, classes, args, verbose=True):
+def truncated_pair(reference_path, reference_classes, prediction_path, prediction_classes,
+                   args, verbose=True):
     """
-    The truncated mask of every class of one file, computing it if the cut
-    on disk is not the one being asked for.
+    The truncated masks of both sides, computing them if the cuts on disk
+    are not the ones being asked for.
 
     Reusing an existing cut is not just a speed-up: it is what lets a run be
     repeated, or a Dice be recomputed with different maps, without the
     skeletonization -- and therefore without any chance of the second run
     cutting somewhere slightly different from the first.
+
+    The pair is reused, or recut, as a unit. With a rescue margin each cut
+    depends on the other side, so half a pair reused next to a half just
+    remade would be a cut against a file that is no longer there; and recutting
+    one side needs the other side's tree anyway, which is the expensive part.
     """
-    destination = output_path(path, args.suffix, args.output_dir)
-    reuse, reason = reusable(destination, classes, args, path)
-    if reuse and not args.overwrite:
-        if verbose:
-            print(f"  reusing {destination}")
-        data = read_volume(destination)[0]
-        return destination, {name: class_mask(data, values) for name, values in classes}, []
-    if not reuse and reason != "not cut yet":
-        print(f"  {os.path.basename(destination)}: {reason}, cutting again")
-    rows, kept = truncate_file(path, classes, args, destination)
-    return destination, kept, rows
+    destinations = (output_path(reference_path, args.suffix, args.output_dir),
+                    output_path(prediction_path, args.suffix, args.output_dir))
+    states = (reusable(destinations[0], reference_classes, args, reference_path, prediction_path),
+              reusable(destinations[1], prediction_classes, args, prediction_path, reference_path))
+    if all(reuse for reuse, _ in states) and not args.overwrite:
+        kept = []
+        for destination, classes in zip(destinations, (reference_classes, prediction_classes)):
+            if verbose:
+                print(f"  reusing {destination}")
+            data = read_volume(destination)[0]
+            kept.append({name: class_mask(data, values) for name, values in classes})
+        return destinations, kept[0], kept[1], []
+    for destination, (reuse, reason) in zip(destinations, states):
+        if not reuse and reason != "not cut yet":
+            print(f"  {os.path.basename(destination)}: {reason}, cutting the pair again")
+    rows, reference_kept, prediction_kept = truncate_pair(
+        reference_path, reference_classes, prediction_path, prediction_classes, args,
+        destinations, verbose=verbose)
+    return destinations, reference_kept, prediction_kept, rows
 
 
 # --------------------------------------------------------------------------- #
@@ -514,21 +524,34 @@ def print_summary(rows, args):
             classes.append(row["class"])
 
     cases = len({row["case"] for row in rows})
+    rescuing = args.rescue_margin > 0
     print(f"\n{cases} case(s) scored on {len(classes)} class(es), "
-          f"large vessels cut at {args.min_diameter} mm")
-    print(f"{'class':<10}{'n':>4}{'dice (whole)':>18}{'dice (large)':>18}{'kept volume':>14}")
+          f"large vessels cut at {args.min_diameter} mm"
+          + (f", branches down to {args.min_diameter - args.rescue_margin} mm kept when the other "
+             f"side held them" if rescuing else ""))
+    print(f"{'class':<10}{'n':>4}{'dice (whole)':>18}{'dice (large)':>18}{'kept volume':>14}"
+          + (f"{'rescued ref/pred':>20}" if rescuing else ""))
     for name in classes:
         subset = [row for row in rows if row["class"] == name]
         full = describe([row["dice_full"] for row in subset])
         large = describe([row["dice_large"] for row in subset])
         kept = describe([row["kept_fraction_reference"] for row in subset])
-        print(f"{name:<10}{full[2]:>4}"
-              f"{f'{full[0]:.4f}+-{full[1]:.3f}':>18}"
-              f"{f'{large[0]:.4f}+-{large[1]:.3f}':>18}"
-              f"{kept[0]:>13.1%}")
+        line = (f"{name:<10}{full[2]:>4}"
+                f"{f'{full[0]:.4f}+-{full[1]:.3f}':>18}"
+                f"{f'{large[0]:.4f}+-{large[1]:.3f}':>18}"
+                f"{kept[0]:>13.1%}")
+        if rescuing:
+            reference = describe([row.get("n_segments_rescued_reference") or 0 for row in subset])
+            prediction = describe([row.get("n_segments_rescued_prediction") or 0 for row in subset])
+            line += f"{f'{reference[0]:.1f} / {prediction[0]:.1f}':>20}"
+        print(line)
     print("\nThe two columns are read on different regions -- the large-vessel one is the\n"
           "easier region by construction -- so they compare models, not each other.\n"
           "Report --min-diameter with the second one.")
+    if rescuing:
+        print(f"The rescued segments are branches under the floor kept because the other side\n"
+              f"kept them, so they mostly add agreement: --rescue-margin 0 for the large-vessel\n"
+              f"Dice without them. Report --rescue-margin ({args.rescue_margin} mm) with it.")
 
 
 # --------------------------------------------------------------------------- #
@@ -575,6 +598,19 @@ def build_parser():
                            "compare_predictions.py --swap-av-a)")
 
     add_cut_arguments(parser)
+
+    rescue = parser.add_argument_group("the threshold effect on the cut")
+    rescue.add_argument("--rescue-margin", type=float, default=1.0, metavar="MM",
+                        help="Tolerance band under --min-diameter, in which a branch is kept "
+                             "anyway when the other side's cut holds the same vessel -- so a "
+                             "vessel measuring 4.1 mm in the reference and 3.9 mm in the "
+                             "prediction is not counted as a miss, with its whole subtree, on a "
+                             "rounding difference. Both ways, and only through the closure: a "
+                             "rescued branch still hangs off one that cleared the floor. 0 cuts "
+                             "each side strictly on its own tree. Default: 1.0")
+    rescue.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION",
+                        help="How much of a branch in that band must lie inside the other side's "
+                             "cut for the two to be the same vessel. Default: 0.5")
 
     maps = parser.add_argument_group("where the two masks differ")
     maps.add_argument("--no-errors", action="store_true",
@@ -642,11 +678,29 @@ def main():
         reference_data, affine, spacing = read_volume(entry["label"])
         prediction_data, prediction_affine, prediction_spacing = read_volume(prediction_file)
 
-        # The Dice is read on the prediction's grid, the reference being
-        # moved onto it when the two differ. Each side is still CUT on its
-        # own grid: the skeleton deserves the resolution its file was
-        # written at, and a `_large` mask sitting next to its source should
-        # have its source's geometry.
+        # The two need not be sampled the same way: the labels come out of
+        # the generator, the synthetic images out of a second pipeline, and
+        # `inference.py` maps its output back onto the IMAGE. A viewer hides
+        # this -- it overlays in world coordinates and resamples for display,
+        # so two volumes describing the same anatomy superimpose perfectly
+        # while their arrays have different shapes -- but a Dice is read
+        # element by element and needs one grid, and `truncate.to_grid` moves
+        # a mask onto the other's.
+        #
+        # The reference is the side that moves, onto the prediction's grid,
+        # for two reasons. It is what training compares against
+        # (`transforms.py`: Spacingd on the image, then
+        # `ResampleToMatchd(keys=["label"], key_dst="image",
+        # mode="nearest")`), so the metric is read in the space the model was
+        # asked to answer in. And it is the direction that cannot invent
+        # errors: were the prediction moved onto a reference covering more
+        # ground, everything the model was never shown would come back as a
+        # false negative.
+        #
+        # Each side is still CUT on its own grid: the skeleton deserves the
+        # resolution its file was written at, and a `_large` mask sitting
+        # next to its source should have its source's geometry. Only the
+        # rescue's support mask crosses, inside `truncate_pair`.
         regrid = not (reference_data.shape == prediction_data.shape
                       and np.allclose(affine, prediction_affine, atol=1e-3))
         scoring_affine = prediction_affine if regrid else affine
@@ -656,20 +710,22 @@ def main():
                   f"{prediction_data.shape} are sampled differently; the reference is "
                   f"resampled onto the prediction's grid, as training does")
 
-        # both sides truncated by the same rule, and both written out
+        # both sides truncated by the same rule, against each other, and both
+        # written out
         reference_classes = [(name, raw) for name, raw, _ in classes]
         prediction_classes = [(name, predicted) for name, _, predicted in classes]
-        reference_cut_file, reference_cut, cut_rows = truncated(
-            entry["label"], reference_classes, args, verbose=not args.quiet)
-        prediction_cut_file, prediction_cut, more = truncated(
-            prediction_file, prediction_classes, args, verbose=not args.quiet)
-        cut_rows = {(r["class"], r["file"]): r for r in cut_rows + more}
+        cut_files, reference_cut, prediction_cut, cut_rows = truncated_pair(
+            entry["label"], reference_classes, prediction_file, prediction_classes, args,
+            verbose=not args.quiet)
+        reference_cut_file, prediction_cut_file = cut_files
+        cut_rows = {(r["class"], r["file"]): r for r in cut_rows}
 
         for name, raw, predicted in classes:
             print(f"{case} [{name}]")
             row = {"case": case, "class": name, "reference": entry["label"],
                    "prediction": prediction_file, "predicted_value": predicted[0],
-                   "min_diameter_mm": args.min_diameter}
+                   "min_diameter_mm": args.min_diameter,
+                   "rescue_margin_mm": args.rescue_margin}
             prediction_whole = class_mask(prediction_data, predicted)
             pairs = (("full", class_mask(reference_data, raw), prediction_whole),
                      ("large", reference_cut[name], prediction_cut[name]))
@@ -700,6 +756,11 @@ def main():
             # as a miss it is not. High here means dice_large is reading the
             # cut as much as the model -- see --min-diameter and the gap
             # between n_segments_kept_reference and _prediction.
+            #
+            # This is what --rescue-margin exists to remove, so it should now
+            # be small; what is left of it is the vessels the rescue could not
+            # reach -- further than a margin under the floor, or hanging off a
+            # branch that was itself cut.
             reference_large, prediction_large = moved["large"]
             missed = reference_large & ~prediction_large
             row["fn_large_segmented_but_cut"] = (
@@ -717,6 +778,14 @@ def main():
                 if row["prediction_ml_full"] else float("nan"),
                 "n_segments_kept_reference": reference_row.get("n_segments_kept"),
                 "n_segments_kept_prediction": prediction_row.get("n_segments_kept"),
+                "n_segments_rescued_reference": reference_row.get("n_segments_rescued"),
+                "n_segments_rescued_prediction": prediction_row.get("n_segments_rescued"),
+                # of those, the ones the tolerance band admitted; the rest
+                # rejoined behind them by the ordinary rule
+                "n_segments_in_band_reference": reference_row.get("n_segments_in_band"),
+                "n_segments_in_band_prediction": prediction_row.get("n_segments_in_band"),
+                "rescued_ml_reference": reference_row.get("rescued_ml"),
+                "rescued_ml_prediction": prediction_row.get("rescued_ml"),
             })
             print(f"  dice: {row['dice_full']:.4f} (whole tree)   "
                   f"{row['dice_large']:.4f} (large vessels)")
