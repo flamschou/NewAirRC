@@ -315,8 +315,16 @@ def plan_cut(mask, affine, spacing, args, verbose=True):
         return None, row
 
     voxels, owner, within = voxel_owners(mask, affine, tree, args.sleeve)
+    # Which branch each owned voxel belongs to, for `branch_coverage` alone.
+    # A junction node is shared by several branches and lands on whichever
+    # writes last: it is a statistic over a branch's voxels, not a decision
+    # about them -- `keep_voxels` marks nodes, and keeps a shared one as soon
+    # as any kept branch contains it.
+    branch_of_node = np.full(len(tree["world"]), -1, dtype=int)
+    for entry in tree["table"]:
+        branch_of_node[entry["nodes"]] = entry["branch_id"]
     plan = {"tree": tree, "shape": mask.shape, "voxel_ml": voxel_ml, "voxels": voxels,
-            "owner": owner, "within": within}
+            "owner": owner, "within": within, "branch": branch_of_node[owner]}
     return plan, row
 
 
@@ -330,6 +338,40 @@ def keep_voxels(plan, keep):
     is_kept[np.concatenate([table[b]["nodes"] for b in keep])] = True
     kept[tuple(plan["voxels"].T)] = is_kept[plan["owner"]] & plan["within"]
     return kept
+
+
+def branch_coverage(plan, other):
+    """
+    Per branch, the share of the voxels it owns that `other` holds too --
+    the support `--rescue-support mask` grants a rescue on.
+
+    `other` is the other side's first-pass cut, already resampled onto this
+    plan's grid. It is asked of the branch's OWN voxels rather than of the
+    two masks at large, because the question is about one vessel: whether
+    the other side kept the thing this branch runs through, not whether the
+    two segmentations agree around there. A branch owning no voxel --
+    everything it might have claimed lies outside its sleeve -- scores 0.
+
+    What it cannot see, and it is worth knowing before reading a cut made
+    with it: what a side keeps is a tube of `--sleeve` local radii, and the
+    tube around a trunk is wide. A thin vessel that merely runs beside a
+    large one, inside its sleeve and inside its mask, is covered 100% by
+    this test while having nothing to do with it. `centerline_support` is
+    the same question asked of the axes, which does separate the two; it is
+    stricter, and strictness has its own cost in matches missed.
+    """
+    table = plan["tree"]["table"]
+    coverage = np.zeros(len(table), dtype=float)
+    take = plan["within"]
+    if not take.any():
+        return coverage
+    branch = plan["branch"][take]
+    voxels = plan["voxels"][take]
+    inside = other[tuple(voxels.T)].astype(float)
+    total = np.bincount(branch, minlength=len(table)).astype(float)
+    held = np.bincount(branch, weights=inside, minlength=len(table))
+    np.divide(held, total, out=coverage, where=total > 0)
+    return coverage
 
 
 def centerline_support(plan, other_plan, other_keep, tolerance):
@@ -480,7 +522,8 @@ def cut_settings(classes, args, source=None, counterpart=None):
     settings["rescue"] = None if not margin else {
         "margin_mm": margin,
         "coverage": args.rescue_coverage,
-        "distance": args.rescue_distance,
+        "support": args.rescue_support,
+        "distance": args.rescue_distance if args.rescue_support == "centerline" else None,
         "against": fingerprint(counterpart) if os.path.exists(counterpart)
         else os.path.basename(counterpart),
     }
@@ -576,13 +619,28 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
     So each side is cut twice. The first pass is the plain rule, and it is
     what the other side is judged against; the second re-selects with a
     tolerance band of `--rescue-margin` under the floor, admitting a branch
-    that falls in it when `--rescue-coverage` of its centerline runs along a
-    branch the OTHER side kept in its first pass -- `centerline_support`,
-    which is a correspondence between axes and not an overlap of masks. The
-    support is always that first pass and never the rescued one: two sides
-    feeding each other would walk a chain of sub-threshold vessels
-    arbitrarily far into the periphery, one margin at a time, and the floor
-    would stop meaning anything.
+    that falls in it when `--rescue-coverage` of it is supported by the
+    OTHER side's first pass. The support is always that first pass and never
+    the rescued one: two sides feeding each other would walk a chain of
+    sub-threshold vessels arbitrarily far into the periphery, one margin at
+    a time, and the floor would stop meaning anything.
+
+    `--rescue-support` picks what "supported" means, and the two answers are
+    not interchangeable:
+
+      mask        (default) the share of the branch's own voxels that lie
+                  inside the other side's cut -- `branch_coverage`. Generous
+                  near large vessels, where the other side's cut is a wide
+                  sleeve, so a thin vessel running beside a trunk can be
+                  fully covered by it without being it.
+      centerline  the share of the branch's axis that runs along an axis the
+                  other side kept -- `centerline_support`. It separates a
+                  vessel from its large neighbour, at the price of the
+                  matches it misses when the two skeletons sit a little
+                  apart, which two different grids are enough to cause.
+
+    Which one is right is a question about a cohort, not about the method;
+    `sweep_rescue.py` puts them side by side on the same trees.
 
     A rescued branch is still only reached through the closure -- it has to
     hang off something that cleared the floor on its own -- and the branches
@@ -613,9 +671,12 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
 
     # Each side is cut on its own grid -- the skeleton deserves the resolution
     # its file was written at, and a cut mask sitting next to its source should
-    # have its source's geometry. Nothing is resampled to cross between them:
-    # the two centerlines are compared in world millimetres, where they both
-    # already live.
+    # have its source's geometry. Only --rescue-support mask has to cross, and
+    # it moves the other side's first-pass cut onto the grid of the side being
+    # rescued; the centerlines are compared in world millimetres, where the two
+    # sides already live, and are never resampled.
+    same_grid = (sides[0]["data"].shape == sides[1]["data"].shape
+                 and np.allclose(sides[0]["affine"], sides[1]["affine"], atol=1e-3))
 
     for name, _ in reference_classes:
         plans, rows = [], []
@@ -656,11 +717,20 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
             keep, rescued = plain[index], set()
             if args.rescue_margin > 0 and other_plan is not None and plain[1 - index]:
                 branches = plan["tree"]["table"]
-                matched = centerline_support(plan, other_plan, plain[1 - index],
-                                             args.rescue_distance)
+                if args.rescue_support == "centerline":
+                    matched = centerline_support(plan, other_plan, plain[1 - index],
+                                                 args.rescue_distance)
 
-                def supported(branch):
-                    return float(matched[branches[branch]["nodes"]].mean()) >= args.rescue_coverage
+                    def supported(branch, matched=matched, branches=branches):
+                        return (float(matched[branches[branch]["nodes"]].mean())
+                                >= args.rescue_coverage)
+                else:
+                    other = first[1 - index]
+                    coverage = branch_coverage(plan, other if same_grid else to_grid(
+                        other, other_side["affine"], plan["shape"], side["affine"]))
+
+                    def supported(branch, coverage=coverage):
+                        return coverage[branch] >= args.rescue_coverage
 
                 keep = select_branches(
                     branches, args.min_diameter, args.max_generation, args.ordering,

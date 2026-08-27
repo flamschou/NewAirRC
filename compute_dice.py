@@ -27,11 +27,13 @@ vessel: half a voxel of partial volume and the same segmental artery measures
 leaves it in one tree and drops it -- with its whole subtree -- from the
 other. Each side is cut twice: the plain rule first, then again with a
 tolerance band of --rescue-margin under the floor, in which a branch is kept
-when --rescue-coverage of its centerline runs along a branch the other side
-kept in its first pass -- a correspondence between axes, not an overlap of
-masks, because what a side keeps is a tube of --sleeve local radii and the
-tube around a trunk is wide enough to swallow any thin vessel beside it (see
-`truncate.py: centerline_support`). It runs both ways, though in practice it is
+when --rescue-coverage of it is supported by the other side's first cut.
+--rescue-support says what supported means: by default the share of the
+branch's voxels lying inside that cut, or, with `centerline`, the share of
+its axis running along an axis the other side kept -- stricter near a trunk,
+whose cut is a wide sleeve, and more easily missed when the two skeletons sit
+a little apart (see `truncate.py: truncate_pair`, and `sweep_rescue.py` to
+put the two side by side on a cohort). It runs both ways, though in practice it is
 mostly the prediction -- smoother and a touch thinner than the reference it
 was trained on -- that loses branches to the floor. The rescue adds where the
 two already agree, so it mostly raises dice_large: `n_segments_rescued_*` and
@@ -603,25 +605,31 @@ def build_parser():
     add_cut_arguments(parser)
 
     rescue = parser.add_argument_group("the threshold effect on the cut")
-    rescue.add_argument("--rescue-margin", type=float, default=1.0, metavar="MM",
+    rescue.add_argument("--rescue-margin", type=float, default=2.0, metavar="MM",
                         help="Tolerance band under --min-diameter, in which a branch is kept "
                              "anyway when the other side's cut holds the same vessel -- so a "
                              "vessel measuring 4.1 mm in the reference and 3.9 mm in the "
                              "prediction is not counted as a miss, with its whole subtree, on a "
                              "rounding difference. Both ways, and only through the closure: a "
                              "rescued branch still hangs off one that cleared the floor. 0 cuts "
-                             "each side strictly on its own tree. Default: 1.0")
+                             "each side strictly on its own tree. Default: 2.0")
     rescue.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION",
-                        help="How much of a branch in that band must run along a branch the other "
-                             "side kept, for the two to be the same vessel. Read on the "
-                             "centerlines: a mask overlap cannot tell a vessel from its large "
-                             "neighbour, whose sleeve it sits inside. Default: 0.5")
-    rescue.add_argument("--rescue-distance", type=float, default=1.0, metavar="RADII",
-                        help="How far the other side's axis may sit from a branch's own, in that "
-                             "branch's local radii, and still be the same vessel. The nearest "
-                             "centerline of the other side decides, dropped branches included, so "
-                             "a vessel it has and cut answers for itself instead of handing the "
-                             "question to the nearest trunk. Default: 1.0")
+                        help="How much of a branch in that band must be supported by the other "
+                             "side's cut for the two to be the same vessel. Default: 0.5")
+    rescue.add_argument("--rescue-support", choices=("mask", "centerline"), default="mask",
+                        help="What supported means. mask: the share of the branch's voxels lying "
+                             "inside the other side's cut -- generous near a trunk, whose cut is a "
+                             "sleeve of --sleeve local radii wide enough to hold a thin vessel "
+                             "that merely runs beside it. centerline: the share of its axis "
+                             "running along an axis the other side kept, which separates a vessel "
+                             "from its large neighbour but misses matches when the two skeletons "
+                             "sit apart, as two different grids are enough to cause. Default: mask")
+    rescue.add_argument("--rescue-distance", type=float, default=1.5, metavar="RADII",
+                        help="--rescue-support centerline only: how far the other side's axis may "
+                             "sit from a branch's own, in that branch's local radii. The nearest "
+                             "centerline decides, dropped branches included, so a vessel the other "
+                             "side has and cut answers for itself instead of handing the question "
+                             "to the nearest trunk. Default: 1.5")
 
     maps = parser.add_argument_group("where the two masks differ")
     maps.add_argument("--no-errors", action="store_true",
