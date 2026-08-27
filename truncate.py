@@ -72,7 +72,8 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes
 from scipy.spatial import cKDTree
 
-from centerline import DIRECTION_OFFSET, build_tree, resample_isotropic, skeletonize_graph
+from centerline import (DIRECTION_OFFSET, build_tree, resample_isotropic, skeletonize_graph,
+                        trunk_calibre)
 
 # A segmental pulmonary artery leaves its lobar parent at roughly 4-6 mm and
 # the subsegmentals under it at 2-3, so a 4 mm floor keeps the segmentals and
@@ -160,6 +161,86 @@ def extract_tree(mask, affine, spacing, args, verbose=True):
         return None
     tree.update(world=world, radii=radii, voxel_size=voxel_size)
     return tree
+
+
+def subdivide(table, world, radii, voxel_size, step):
+    """
+    Cuts every branch into pieces of at most `step` mm, so the truncation can
+    fall INSIDE a branch instead of only between branches.
+
+    Why the branch is the wrong object to decide on. `calibre_mm` is one
+    median over a whole branch (`centerline.trunk_calibre`), and a branch
+    runs from one bifurcation to the next -- which is a property of the
+    SKELETON, not of the anatomy. Two segmentations of the same tree do not
+    bifurcate in the same places: wherever one has a small side branch the
+    other missed, it has a junction the other has not, and the vessel that
+    the first describes with three segments the second describes with one
+    long one. That long branch gets a single calibre averaging its 5 mm
+    proximal end with its 2.5 mm distal one, lands under the floor, and
+    leaves with its whole subtree, while the other side keeps the proximal
+    two thirds of the same vessel because they happen to be their own
+    segments. The disagreement is then read as a false negative at every
+    branch tip of the tree, and no rescue can undo it: the rescue argues
+    about which branches to keep, and the branch is what is wrong.
+
+    Splitting at a fixed arc length gives both sides the same granularity in
+    millimetres whatever their bifurcations do. A piece keeps the boundary
+    node it shares with the next one, so consecutive pieces are neighbours
+    by the rule `select_branches` already uses and the closure walks a
+    branch from its proximal end to wherever the calibre drops.
+
+    The calibre of a piece is `trunk_calibre` over that piece alone. The
+    junction trim is applied only where there is a junction -- the two ends
+    of the ORIGINAL branch -- since a split point invented here carries no
+    bifurcation blob to cut away.
+
+    `step` of 0 returns the table untouched, which is the old behaviour: one
+    decision per branch.
+    """
+    if step <= 0:
+        return table
+
+    ends = defaultdict(int)
+    for entry in table:
+        ends[entry["nodes"][0]] += 1
+        ends[entry["nodes"][-1]] += 1
+
+    pieces = []
+    for entry in table:
+        nodes = np.asarray(entry["nodes"])
+        points = world[nodes]
+        walked = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))])
+        total = float(walked[-1])
+        count = max(1, int(np.ceil(total / step))) if total > 0 else 1
+
+        cuts = [0]
+        for k in range(1, count):
+            index = int(np.searchsorted(walked, k * total / count))
+            if cuts[-1] < index < len(nodes) - 1:
+                cuts.append(index)
+        cuts.append(len(nodes) - 1)
+
+        # a free end carries no junction blob, and neither does a split point
+        head_junction = float(radii[nodes[0]]) if ends[entry["nodes"][0]] > 1 else 0.0
+        tail_junction = float(radii[nodes[-1]]) if ends[entry["nodes"][-1]] > 1 else 0.0
+        for k in range(len(cuts) - 1):
+            start, stop = cuts[k], cuts[k + 1]
+            piece = nodes[start:stop + 1]
+            pieces.append({
+                "branch_id": len(pieces),
+                "source_branch_id": entry["branch_id"],
+                "nodes": piece,
+                "n_points": len(piece),
+                "length_mm": float(walked[stop] - walked[start]),
+                "calibre_mm": trunk_calibre(
+                    piece, world, radii,
+                    head_junction if k == 0 else 0.0,
+                    tail_junction if k == len(cuts) - 2 else 0.0, voxel_size),
+                "generation": entry["generation"],
+                "bfs_generation": entry["bfs_generation"],
+                "strahler_dd": entry["strahler_dd"],
+            })
+    return pieces
 
 
 def select_branches(table, min_diameter, max_generation=None, ordering="generation",
@@ -314,18 +395,45 @@ def plan_cut(mask, affine, spacing, args, verbose=True):
         print("  WARNING: nothing left after pruning, the class is dropped")
         return None, row
 
+    # from here on the "branches" of the tree are pieces of bounded length,
+    # so that what is decided per entry is decided per millimetre of vessel
+    # and not per bifurcation of one side's skeleton
+    row["cut_step_mm"] = args.cut_step
+    branches = len(tree["table"])
+    tree["table"] = subdivide(tree["table"], tree["world"], tree["radii"],
+                              tree["voxel_size"], args.cut_step)
+    if verbose and len(tree["table"]) != branches:
+        print(f"  {branches} branches cut into {len(tree['table'])} pieces "
+              f"of at most {args.cut_step} mm")
+
     voxels, owner, within = voxel_owners(mask, affine, tree, args.sleeve)
-    # Which branch each owned voxel belongs to, for `branch_coverage` alone.
-    # A junction node is shared by several branches and lands on whichever
-    # writes last: it is a statistic over a branch's voxels, not a decision
-    # about them -- `keep_voxels` marks nodes, and keeps a shared one as soon
-    # as any kept branch contains it.
-    branch_of_node = np.full(len(tree["world"]), -1, dtype=int)
-    for entry in tree["table"]:
-        branch_of_node[entry["nodes"]] = entry["branch_id"]
     plan = {"tree": tree, "shape": mask.shape, "voxel_ml": voxel_ml, "voxels": voxels,
-            "owner": owner, "within": within, "branch": branch_of_node[owner]}
-    return plan, row
+            "owner": owner, "within": within}
+    return retable(plan, tree["table"]), row
+
+
+def retable(plan, table):
+    """
+    Puts a branch table on a plan, and refreshes what is derived from it.
+
+    The Voronoi ownership of the voxels depends on the skeleton's NODES and
+    not on how they are grouped into branches, so a plan outlives a change
+    of table -- which is what lets `sweep_rescue.py` try several --cut-step
+    on one skeletonization.
+
+    `branch` is which branch each owned voxel belongs to, for
+    `branch_coverage` alone. A junction node is shared by several branches
+    and lands on whichever writes last: it is a statistic over a branch's
+    voxels, not a decision about them -- `keep_voxels` marks nodes, and
+    keeps a shared one as soon as any kept branch contains it.
+    """
+    plan["tree"]["table"] = table
+    branch_of_node = np.full(len(plan["tree"]["world"]), -1, dtype=int)
+    for entry in table:
+        branch_of_node[entry["nodes"]] = entry["branch_id"]
+    plan["branch"] = (branch_of_node[plan["owner"]] if len(plan["voxels"])
+                      else np.zeros(0, dtype=int))
+    return plan
 
 
 def keep_voxels(plan, keep):
@@ -501,6 +609,7 @@ def cut_settings(classes, args, source=None, counterpart=None):
     settings = {
         "classes": {name: (list(values) if values else None) for name, values in classes},
         "min_diameter_mm": args.min_diameter,
+        "cut_step": args.cut_step,
         "max_generation": args.max_generation,
         "ordering": args.ordering,
         "min_strahler": args.min_strahler,
@@ -819,6 +928,13 @@ def add_cut_arguments(parser):
                      help="A branch thinner than this is cut off, with everything under it. This "
                           f"is what \"large vessel\" means here -- report it. Default: {MIN_DIAMETER_MM} "
                           "mm, which keeps the segmental vessels and drops the generation below")
+    cut.add_argument("--cut-step", type=float, default=5.0, metavar="MM",
+                     help="Cut every branch into pieces of at most this length before deciding, so "
+                          "the floor is applied to a LOCAL calibre and the cut can fall inside a "
+                          "branch. Without it the decision is one median over a whole branch, and "
+                          "a branch runs between bifurcations -- a property of the skeleton, so "
+                          "two segmentations that do not bifurcate alike get different cuts of the "
+                          "same anatomy. 0 restores one decision per branch. Default: 5")
     cut.add_argument("--max-generation", type=int, default=None, metavar="N",
                      help="Also cut below this order of --ordering. Off by default: the depth of a "
                           "branch is a property of the skeleton's topology, which one missed "

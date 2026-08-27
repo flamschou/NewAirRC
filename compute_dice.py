@@ -744,7 +744,7 @@ def main():
             print(f"{case} [{name}]")
             row = {"case": case, "class": name, "reference": entry["label"],
                    "prediction": prediction_file, "predicted_value": predicted[0],
-                   "min_diameter_mm": args.min_diameter,
+                   "min_diameter_mm": args.min_diameter, "cut_step_mm": args.cut_step,
                    "rescue_margin_mm": args.rescue_margin}
             prediction_whole = class_mask(prediction_data, predicted)
             pairs = (("full", class_mask(reference_data, raw), prediction_whole),
