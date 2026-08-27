@@ -76,11 +76,19 @@ from centerline import (DIRECTION_OFFSET, build_tree, resample_isotropic, skelet
                         trunk_calibre)
 
 # A segmental pulmonary artery leaves its lobar parent at roughly 4-6 mm and
-# the subsegmentals under it at 2-3, so a 4 mm floor keeps the segmentals and
-# cuts the generation below them. It is the definition of "large vessel" here
-# and it is a knob, not a fact: report the value used with whatever the
-# truncated masks end up scoring.
-MIN_DIAMETER_MM = 4.0
+# the subsegmentals under it at 2-3. A 4 mm floor sits at the BOTTOM of the
+# segmental range, which puts the truncation boundary inside that generation --
+# exactly where two segmentations of one tree disagree most, since half a
+# millimetre of wall drops a branch there to either side of the floor. 5 mm
+# sits inside the range rather than on its edge, so the boundary falls on
+# vessels both sides agree are large.
+#
+# It is the definition of "large vessel" here and it is a knob, not a fact:
+# report the value used with whatever the truncated masks end up scoring.
+# `sweep_rescue.py --floors` is what moving it does to a cohort, and the only
+# operational test is two models -- the right floor is the one where they
+# still separate.
+MIN_DIAMETER_MM = 5.0
 SUFFIX = "_large"
 
 
@@ -716,7 +724,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
     Why the two cuts are made together. `--min-diameter` is a floor on a
     MEASUREMENT of a segmentation, not on the vessel: half a voxel of
     partial volume, a wall the model drew one voxel thin, and the same
-    segmental artery measures 4.1 mm in the reference and 3.9 mm in the
+    segmental artery measures 5.1 mm in the reference and 4.9 mm in the
     prediction. Cut independently it stays in one tree and leaves the other
     with its whole subtree behind it, and a Dice read on the two then
     reports as a miss what is a rounding difference on the cut. The effect
@@ -927,7 +935,8 @@ def add_cut_arguments(parser):
     cut.add_argument("--min-diameter", type=float, default=MIN_DIAMETER_MM, metavar="MM",
                      help="A branch thinner than this is cut off, with everything under it. This "
                           f"is what \"large vessel\" means here -- report it. Default: {MIN_DIAMETER_MM} "
-                          "mm, which keeps the segmental vessels and drops the generation below")
+                          "mm, which sits inside the segmental range rather than at its lower "
+                          "edge, where the two sides disagree most")
     cut.add_argument("--cut-step", type=float, default=5.0, metavar="MM",
                      help="Cut every branch into pieces of at most this length before deciding, so "
                           "the floor is applied to a LOCAL calibre and the cut can fall inside a "

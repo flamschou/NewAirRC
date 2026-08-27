@@ -23,7 +23,7 @@ before quoting its Dice.
 The two cuts are therefore made against each other rather than one after the
 other, because --min-diameter is a floor on a MEASUREMENT and not on the
 vessel: half a voxel of partial volume and the same segmental artery measures
-4.1 mm in the reference and 3.9 mm in the prediction, which cut independently
+5.1 mm in the reference and 4.9 mm in the prediction, which cut independently
 leaves it in one tree and drops it -- with its whole subtree -- from the
 other. Each side is cut twice: the plain rule first, then again with a
 tolerance band of --rescue-margin under the floor, in which a branch is kept
@@ -608,7 +608,7 @@ def build_parser():
     rescue.add_argument("--rescue-margin", type=float, default=2.0, metavar="MM",
                         help="Tolerance band under --min-diameter, in which a branch is kept "
                              "anyway when the other side's cut holds the same vessel -- so a "
-                             "vessel measuring 4.1 mm in the reference and 3.9 mm in the "
+                             "vessel measuring 5.1 mm in the reference and 4.9 mm in the "
                              "prediction is not counted as a miss, with its whole subtree, on a "
                              "rounding difference. Both ways, and only through the closure: a "
                              "rescued branch still hangs off one that cleared the floor. 0 cuts "

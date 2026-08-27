@@ -211,7 +211,8 @@ a false positive.
 
 The mask is skeletonized and measured exactly as `centerline.py` does it,
 then the tree is truncated: a branch has to clear `--min-diameter` (default
-4 mm, which keeps the segmental vessels and drops the generation below), and
+5 mm, which sits inside the segmental range rather than at its lower edge,
+where two segmentations of one tree disagree most), and
 what is kept is the connected group of such branches that contains the
 **widest branch of the tree**. Clearing the floor is necessary and not
 sufficient, which is what makes this a truncation rather than a calibre

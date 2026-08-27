@@ -131,29 +131,36 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
     else:
         scoring = owners[0]
 
+    # the reference's whole tree on the scoring grid, to say what share of it
+    # each floor leaves standing
+    reference_ml = float((scoring[0] >= 0).sum() * voxel_ml)
+
     rows = []
     for step in args.steps:
         for index, plan in enumerate(plans):
             retable(plan, subdivide(raw[index], plan["tree"]["world"], plan["tree"]["radii"],
                                     plan["tree"]["voxel_size"], step))
-        # the plain rule, on both sides: the baseline, and what every rescue is
-        # judged against whatever the other knobs are
-        plain = [select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
-                                 args.ordering, args.min_strahler) for plan in plans]
-        support_masks = [None, None]
-        if "mask" in args.supports:
-            onto_prediction = cut_from(*scoring, kept_nodes(plans[0]["tree"], plain[0]))
-            onto_reference = cut_from(*owners[1], kept_nodes(plans[1]["tree"], plain[1]))
-            if regrid:
-                onto_reference = to_grid(onto_reference, prediction_affine, plans[0]["shape"],
-                                         reference_affine)
-            support_masks = [onto_reference, onto_prediction]
-        rows.extend(sweep_knobs(plans, plain, support_masks, owners, scoring, step, voxel_ml, args))
+        for floor in args.floors:
+            # the plain rule, on both sides: the baseline, and what every
+            # rescue is judged against whatever the other knobs are
+            plain = [select_branches(plan["tree"]["table"], floor, args.max_generation,
+                                     args.ordering, args.min_strahler) for plan in plans]
+            support_masks = [None, None]
+            if "mask" in args.supports:
+                onto_prediction = cut_from(*scoring, kept_nodes(plans[0]["tree"], plain[0]))
+                onto_reference = cut_from(*owners[1], kept_nodes(plans[1]["tree"], plain[1]))
+                if regrid:
+                    onto_reference = to_grid(onto_reference, prediction_affine, plans[0]["shape"],
+                                             reference_affine)
+                support_masks = [onto_reference, onto_prediction]
+            rows.extend(sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor,
+                                    reference_ml, voxel_ml, args))
     return rows, None
 
 
-def sweep_knobs(plans, plain, support_masks, owners, scoring, step, voxel_ml, args):
-    """Every (support, distance, margin) at one --cut-step, on one pair of trees."""
+def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, reference_ml, voxel_ml,
+                args):
+    """Every (support, distance, margin) at one --cut-step and one floor."""
     rows = []
     for support in args.supports:
         # the mask overlap has no distance to sweep; the correspondence is
@@ -178,13 +185,17 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, voxel_ml, ar
                         keep.append(plain[index])
                         continue
                     keep.append(select_branches(
-                        plan["tree"]["table"], args.min_diameter, args.max_generation,
+                        plan["tree"]["table"], floor, args.max_generation,
                         args.ordering, args.min_strahler, margin=margin,
                         supported=predicates[index]))
                 reference_cut = cut_from(*scoring, kept_nodes(plans[0]["tree"], keep[0]))
                 prediction_cut = cut_from(*owners[1], kept_nodes(plans[1]["tree"], keep[1]))
+                reference_large_ml = float(reference_cut.sum() * voxel_ml)
                 rows.append({
-                    "cut_step_mm": step, "support": support, "margin_mm": margin,
+                    "min_diameter_mm": floor, "cut_step_mm": step, "support": support,
+                    "margin_mm": margin,
+                    "kept_fraction_reference": (reference_large_ml / reference_ml
+                                                if reference_ml else float("nan")),
                     "distance_radii": "" if distance is None else distance,
                     "n_kept_reference": len(keep[0]), "n_kept_prediction": len(keep[1]),
                     "n_rescued_reference": len(keep[0] - plain[0]),
@@ -193,7 +204,7 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, voxel_ml, ar
                                              for b in keep[0]),
                     "prediction_kept_mm": sum(plans[1]["tree"]["table"][b]["length_mm"]
                                               for b in keep[1]),
-                    "reference_large_ml": float(reference_cut.sum() * voxel_ml),
+                    "reference_large_ml": reference_large_ml,
                     "prediction_large_ml": float(prediction_cut.sum() * voxel_ml),
                     "dice_large": dice(reference_cut, prediction_cut),
                 })
@@ -202,39 +213,43 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, voxel_ml, ar
 
 def summarize(rows, args):
     """The grid, averaged over the cases that produced every combination."""
-    print(f"\n{'step':>6}{'support':>11}{'margin':>8}{'dist':>6}{'dice_large':>13}"
-          f"{'rescued ref/pred':>20}{'kept ref/pred':>18}{'centerline ref/pred':>22}"
-          f"{'volume gap mL':>15}")
-    baseline = None
-    for step in args.steps:
-        for support in args.supports:
-            for distance in ([""] if support == "mask" else list(args.distances)):
-                for margin in args.margins:
-                    subset = [r for r in rows
-                              if r["cut_step_mm"] == step and r["support"] == support
-                              and r["margin_mm"] == margin and r["distance_radii"] == distance]
-                    if not subset:
-                        continue
-                    mean = lambda key: float(np.mean([r[key] for r in subset]))
-                    gap = float(np.mean([abs(r["reference_large_ml"] - r["prediction_large_ml"])
-                                         for r in subset]))
-                    rescued = (f"{mean('n_rescued_reference'):.1f}"
-                               f" / {mean('n_rescued_prediction'):.1f}")
-                    kept = f"{mean('n_kept_reference'):.0f} / {mean('n_kept_prediction'):.0f}"
-                    centerline = (f"{mean('reference_kept_mm'):.0f}"
-                                  f" / {mean('prediction_kept_mm'):.0f}")
-                    if baseline is None:
-                        baseline = mean("dice_large")
-                    print(f"{step:>6.1f}{support:>11}{margin:>8.2f}{str(distance):>6}"
-                          f"{mean('dice_large'):>13.4f}{rescued:>20}{kept:>18}"
-                          f"{centerline:>22}{gap:>15.2f}")
-    print("\nRead the knee, not the maximum: the Dice rises with every knob by construction.\n"
-          "'centerline ref/pred' is the one to watch for --cut-step: it is how many mm of\n"
-          "vessel each side calls large, and the two disagreeing is the granularity problem\n"
-          "-- a long branch that one side cuts whole and the other keeps in part. It should\n"
-          "close as the step shrinks, and then stop closing. The volume gap says the same in mL.")
-    print(f"\nthe first row is the cut with no rescue and no subdivision: "
-          f"dice_large {baseline:.4f}")
+    print(f"\n{'floor':>7}{'step':>6}{'support':>11}{'margin':>8}{'dist':>6}{'dice_large':>13}"
+          f"{'kept vol':>10}{'centerline ref/pred':>22}{'volume gap mL':>15}")
+    for floor in args.floors:
+        for step in args.steps:
+            for support in args.supports:
+                for distance in ([""] if support == "mask" else list(args.distances)):
+                    for margin in args.margins:
+                        subset = [r for r in rows
+                                  if r["min_diameter_mm"] == floor and r["cut_step_mm"] == step
+                                  and r["support"] == support and r["margin_mm"] == margin
+                                  and r["distance_radii"] == distance]
+                        if not subset:
+                            continue
+                        mean = lambda key: float(np.mean([r[key] for r in subset]))
+                        gap = float(np.mean([abs(r["reference_large_ml"] - r["prediction_large_ml"])
+                                             for r in subset]))
+                        centerline = (f"{mean('reference_kept_mm'):.0f}"
+                                      f" / {mean('prediction_kept_mm'):.0f}")
+                        print(f"{floor:>7.1f}{step:>6.1f}{support:>11}{margin:>8.2f}"
+                              f"{str(distance):>6}{mean('dice_large'):>13.4f}"
+                              f"{mean('kept_fraction_reference'):>9.1%}"
+                              f"{centerline:>22}{gap:>15.2f}")
+    print("\nThe three knobs do not behave alike, so do not read the table the same way down\n"
+          "each column.\n"
+          "\n"
+          "  floor  changes WHICH REGION is scored, so its Dice moves in no guaranteed\n"
+          "         direction -- a higher floor is an easier region but it is also a smaller\n"
+          "         one, with its own errors, and the number can fall. What is monotone is\n"
+          "         'kept vol': a floor that leaves 20% of the volume standing is a Dice on\n"
+          "         the hilum, whatever it reads. And no single model settles this -- the\n"
+          "         right floor is the one where two models still SEPARATE, so run this on\n"
+          "         both checkpoints and take the floor where the gap between them is widest.\n"
+          "  step   watch 'centerline ref/pred'. The two disagreeing is the granularity\n"
+          "         problem -- a long branch one side cuts whole and the other keeps in part.\n"
+          "         It should close as the step shrinks, and then stop closing.\n"
+          "  margin an on/off more than a distance: the rescue reaches at most where the other\n"
+          "         side's plain cut stopped, so 0 against non-0 is the only real comparison.")
 
 
 def build_parser():
@@ -256,6 +271,9 @@ def build_parser():
     parser.add_argument("--distances", type=float, nargs="+", default=[1.0, 1.5, 2.0],
                         metavar="RADII")
     parser.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION")
+    parser.add_argument("--floors", type=float, nargs="+", default=None, metavar="MM",
+                        help="--min-diameter values to put in the grid: what \"large vessel\" is "
+                             "taken to mean. Default: the single value of --min-diameter")
     parser.add_argument("--steps", type=float, nargs="+", default=[0.0, 3.0, 5.0, 10.0],
                         metavar="MM",
                         help="--cut-step values to put in the grid: how long a piece of branch the "
@@ -274,6 +292,7 @@ def main():
     args.max_shift = None
     args.angle_offset = DIRECTION_OFFSET
     args.quiet = True
+    args.floors = args.floors or [args.min_diameter]
 
     with open(args.manifest) as handle:
         entries = [e for e in json.load(handle) if e.get("split") == args.split]
