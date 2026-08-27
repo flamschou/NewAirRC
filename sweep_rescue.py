@@ -146,7 +146,10 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
             plain = [select_branches(plan["tree"]["table"], floor, args.max_generation,
                                      args.ordering, args.min_strahler) for plan in plans]
             support_masks = [None, None]
-            if "mask" in args.supports:
+            # the support is only ever read by a rescue: with no margin in the
+            # grid, nothing asks for it, and moving it between the two grids is
+            # the one resample per floor this loop would otherwise pay
+            if "mask" in args.supports and any(m > 0 for m in args.margins):
                 onto_prediction = cut_from(*scoring, kept_nodes(plans[0]["tree"], plain[0]))
                 onto_reference = cut_from(*owners[1], kept_nodes(plans[1]["tree"], plain[1]))
                 if regrid:
@@ -161,21 +164,25 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
 def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, reference_ml, voxel_ml,
                 args):
     """Every (support, distance, margin) at one --cut-step and one floor."""
+    rescuing = any(margin > 0 for margin in args.margins)
     rows = []
     for support in args.supports:
         # the mask overlap has no distance to sweep; the correspondence is
         # computed once per distance and every margin reads it
         for distance in ([None] if support == "mask" else list(args.distances)):
-            predicates = []
-            for index, plan in enumerate(plans):
+            # nothing to build when no margin will ask for it: with --margins 0
+            # the selection never calls a predicate, and the mask support was
+            # not resampled either
+            predicates = [None, None]
+            for index, plan in enumerate(plans if rescuing else ()):
                 branches = plan["tree"]["table"]
                 if support == "mask":
                     coverage = branch_coverage(plan, support_masks[index])
-                    predicates.append(
+                    predicates[index] = (
                         lambda branch, coverage=coverage: coverage[branch] >= args.rescue_coverage)
                 else:
                     matched = centerline_support(plan, plans[1 - index], plain[1 - index], distance)
-                    predicates.append(
+                    predicates[index] = (
                         lambda branch, matched=matched, branches=branches:
                         float(matched[branches[branch]["nodes"]].mean()) >= args.rescue_coverage)
             for margin in args.margins:
@@ -281,6 +288,10 @@ def build_parser():
     parser.add_argument("--supports", nargs="+", choices=("mask", "centerline"),
                         default=["mask", "centerline"],
                         help="Which definition(s) of supported to put in the grid. Default: both")
+    parser.add_argument("--label", default="",
+                        help="Written into every row, to say which model produced it. Two "
+                             "checkpoints swept into two CSVs then concatenate into the one "
+                             "table the floor is actually chosen on")
     parser.add_argument("--csv", help="One row per case, class and combination")
     add_cut_arguments(parser)
     add_skeleton_arguments(parser)
@@ -321,7 +332,7 @@ def main():
                 print(f"  skipped: {why}")
                 continue
             for row in produced:
-                row.update(case=case, **{"class": name})
+                row.update(case=case, model=args.label, **{"class": name})
             rows.append(produced)
             best = max(produced, key=lambda r: r["dice_large"])
             plain = min(produced, key=lambda r: (r["margin_mm"], r["cut_step_mm"]))
@@ -333,7 +344,8 @@ def main():
     flat = [row for produced in rows for row in produced]
     summarize(flat, args)
     if args.csv:
-        columns = ["case", "class"] + [k for k in flat[0] if k not in ("case", "class")]
+        head = ("model", "case", "class")
+        columns = list(head) + [k for k in flat[0] if k not in head]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
             writer.writeheader()
