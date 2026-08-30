@@ -20,7 +20,8 @@ manifest.json --> manifest.py --> transforms.py --> dataset.py --> train.py --> 
   pipelines. Modality-agnostic (no CT-specific Hounsfield unit logic).
 - `dataset.py` — builds the cached `PersistentDataset`/`DataLoader` objects.
 - `model.py` — `DynUNet` construction.
-- `config_loss.py` — deep-supervision-weighted Dice+CE loss.
+- `config_loss.py` — deep-supervision-weighted Dice+CE loss, plus the
+  optional clDice continuity term (see *Adding the continuity term*).
 - `train.py` — training entrypoint (single stage).
 - `inference.py` — sliding-window prediction on full volumes from a trained
   checkpoint.
@@ -80,6 +81,107 @@ This queues the job and prints its `<jobid>`. `train.slurm` writes stdout to
 `slurm-<jobid>.out` and stderr to `slurm-<jobid>.err` in the submission
 directory, and sets `DATASET_ROOT` (checkpoints/logs/cache) and
 `MANIFEST_PATH` for `train.py`.
+
+`finetune_cldice.slurm` is the same job with the continuity term switched on
+— see the next section.
+
+## Adding the continuity term (clDice)
+
+Dice and cross-entropy are voxel-wise. A two-voxel break in a vessel costs
+them almost nothing, and yet it splits the tree in two: downstream, every
+branch past the break is reassigned to a different component, which shifts
+its Strahler order and corrupts the branching ratios `centerline.py`
+measures. Whole-tree Dice is simply not the metric that sees this.
+
+`config_loss.py` implements **clDice** (Shit et al., CVPR 2021) as an
+optional extra term:
+
+```
+loss = DiceCE + CLDICE_WEIGHT * clDice
+```
+
+clDice compares the *skeletons* of the masks instead of the masks. It is the
+harmonic mean of a topology precision (how much of the predicted skeleton
+falls inside the true mask) and a topology sensitivity (how much of the true
+skeleton falls inside the predicted mask); a gap removes a whole run of true
+skeleton from the second term, so the term sees the break that Dice missed.
+The skeletonization is *soft* — iterated min/max pooling — so the whole thing
+stays differentiable and needs no post-processing.
+
+Settings, all in `config.py` and all overridable from the environment:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `CLDICE_WEIGHT` | `0.0` | lambda above. **0 disables the term** and reproduces the original loss exactly. `0.5` is the clDice paper's value for tubular structures. |
+| `CLDICE_ITERATIONS` | `6` | soft-skeletonization iterations. Must be >= the largest vessel radius in voxels, or thick vessels never thin down to a curve: ~10 mm across at `TARGET_SPACING = 1 mm` is a radius of 5, plus one for margin. |
+| `CLDICE_WARMUP_EPOCHS` | `20` | epochs over which the weight ramps linearly from 0. The skeleton of a not-yet-vessel-shaped prediction is noise, and clDice on noise pulls towards thin fragmented masks; the ramp keeps the term quiet until there is something for it to fix. |
+
+Two deliberate restrictions in the implementation: the term is applied to the
+**full-resolution deep-supervision level only** (at 1/2 and 1/4 resolution the
+thinnest vessels are sub-voxel, so their "skeleton" is a downsampling
+artifact), and it is computed in **fp32** even under `precision="16-mixed"`
+(the pooling chain ends in differences of nearly-equal numbers). It costs
+about +20% per training step.
+
+### Fine-tuning rather than retraining
+
+The term is meant to be added to an already-trained model, not trained from
+scratch with: clDice only starts saying something useful once the
+segmentation is roughly right, and a fine-tuning run is short enough to sweep
+`CLDICE_WEIGHT` and `CLDICE_ITERATIONS` over. Set `FINETUNE_FROM` to a
+checkpoint and `train.py` loads its **weights only**:
+
+```bash
+sbatch finetune_cldice.slurm
+```
+
+which is `train.slurm` plus, in the environment:
+
+```bash
+EXPERIMENT_NAME="${BASE_EXPERIMENT}_cldice_ft"   # own logs/checkpoints
+FINETUNE_FROM=".../checkpoints/$BASE_EXPERIMENT/run/last.ckpt"
+CACHE_NAME="$BASE_EXPERIMENT"                     # share the dataset cache
+CLDICE_WEIGHT=0.5
+LEARNING_RATE=1e-4                                # a tenth of the baseline
+MAX_EPOCHS=150
+```
+
+Three things that would otherwise be easy to get wrong, and that the code now
+handles:
+
+- **weights only, not a resume.** `FINETUNE_FROM` is deliberately not passed
+  as `Trainer.fit(ckpt_path=...)`, which would also restore the source run's
+  optimizer state and epoch counter — and with the epoch counter its PolyLR
+  schedule, already decayed to ~0 at the end of that run. The fine-tuning
+  would train at `lr = 0` and nothing would move. Rebuilding the schedule
+  from `LEARNING_RATE`/`MAX_EPOCHS` restarts the decay at 1e-4 instead.
+- **auto-resume still wins.** If the fine-tuning run's own `last.ckpt` exists,
+  it is resumed normally, so a preempted job picks up where it stopped rather
+  than restarting from the base weights.
+- **the dataset cache is shared.** `CACHE_DIR` is scoped to `EXPERIMENT_NAME`
+  so that a change in preprocessing cannot silently reuse stale cached
+  tensors. A fine-tuning changes no preprocessing, so `CACHE_NAME` points it
+  back at the base experiment's cache instead of paying for a full re-cache.
+
+Keep one from-scratch run (`CLDICE_WEIGHT=0.5` in `train.slurm`, no
+`FINETUNE_FROM`) for the final comparison if the numbers are going in a
+paper: "DiceCE vs DiceCE+clDice" is only an honest comparison at equal budget
+from the same initialization.
+
+### Judging whether it worked
+
+`val_dice_metric` will barely move — it is not the metric this term targets,
+and `val_loss` is not comparable across the warm-up epochs either (the
+`cldice_weight` scalar is logged to TensorBoard so you can see where the ramp
+was). Judge it on full volumes, via `inference.py`, with:
+
+- `connectivity.py` — number of connected components and the fraction of the
+  mask held by the largest one;
+- `compare_predictions.py` — component counts and surface metrics of the
+  fine-tuned predictions against the baseline's, no ground truth needed;
+- `centerline.py --orphans-csv --orders-csv` — the one that actually matters
+  here: how much of the tree falls outside the main component, and how many
+  Strahler orders survive.
 
 ## Monitoring training
 

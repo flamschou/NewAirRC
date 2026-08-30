@@ -14,7 +14,12 @@ MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 
-EXPERIMENT_NAME = "vessel_segmentation_vein_artery_vibe_v1"
+# Overridable from the environment so a variant run (a different loss, a
+# fine-tuning) gets its own logs/checkpoints without editing this file --
+# see finetune_cldice.slurm.
+EXPERIMENT_NAME = os.environ.get(
+    "EXPERIMENT_NAME", "vessel_segmentation_vein_artery_vibe_v1"
+)
 
 # PersistentDataset's cache key is based only on item identity (image/label
 # paths), never on the transform pipeline itself -- changing any transform
@@ -23,7 +28,14 @@ EXPERIMENT_NAME = "vessel_segmentation_vein_artery_vibe_v1"
 # tensors otherwise. Scoping the cache dir to EXPERIMENT_NAME means the
 # rename that should already accompany such a change also gets you a fresh
 # cache for free.
-CACHE_DIR = os.path.join(ROOT_DIR, "cache", EXPERIMENT_NAME)
+#
+# CACHE_NAME is the escape hatch for the opposite case: a run that changes
+# nothing in the deterministic preprocessing (only the loss, the LR, the
+# number of epochs) but does want its own EXPERIMENT_NAME. Point it at the
+# original experiment's name and the two runs share one cache instead of
+# each paying for a full re-cache of the dataset.
+CACHE_NAME = os.environ.get("CACHE_NAME", EXPERIMENT_NAME)
+CACHE_DIR = os.path.join(ROOT_DIR, "cache", CACHE_NAME)
 
 # --- Classes ---
 # Index 0 must be the background. Add/remove foreground class names here --
@@ -66,11 +78,43 @@ POS_NEG_SAMPLE_RATIO = (1, 1)
 # --- Training ---
 BATCH_SIZE = 6
 NUM_WORKERS = 8
-LEARNING_RATE = 1e-3
-MAX_EPOCHS = 2000
+# LEARNING_RATE and MAX_EPOCHS are read from the environment because a
+# fine-tuning run is exactly the same setup with those two turned down; the
+# PolyLR schedule is rebuilt from them, so a fine-tuning restarts the decay
+# at the lower LR instead of resuming a schedule that has already reached 0.
+LEARNING_RATE = float(os.environ.get("LEARNING_RATE", 1e-3))
+MAX_EPOCHS = int(os.environ.get("MAX_EPOCHS", 2000))
 DEEP_SUPERVISION_LEVELS = 4
 SEED = 42
 DEVICE_INDEX = 0
+
+# Path to a checkpoint whose *weights only* seed this run (optimizer state,
+# LR schedule and epoch counter are not restored -- that is what separates a
+# fine-tuning from a resume). Empty means train from scratch. Auto-resuming
+# this run's own last.ckpt still takes precedence, so a preempted
+# fine-tuning picks up where it stopped rather than restarting from the
+# original weights.
+FINETUNE_FROM = os.environ.get("FINETUNE_FROM", "") or None
+
+# --- Continuity term (clDice) ---
+# Dice and CE are voxel-wise and barely notice a two-voxel break in a
+# vessel, which nonetheless splits the tree and corrupts every branching
+# statistic computed downstream. clDice scores the skeletons of the masks
+# instead, so a break costs it a whole run of centerline. See config_loss.py.
+#
+# CLDICE_WEIGHT is the lambda in `DiceCE + lambda * clDice`; 0 disables the
+# term entirely and reproduces the original loss exactly. 0.5 is the value
+# the clDice paper uses for tubular structures.
+CLDICE_WEIGHT = float(os.environ.get("CLDICE_WEIGHT", 0.0))
+# Soft-skeletonization iterations. Must be >= the largest vessel radius in
+# voxels or thick vessels never thin to a curve: ~10 mm across at
+# TARGET_SPACING = 1 mm gives a radius of 5, plus one for margin.
+CLDICE_ITERATIONS = int(os.environ.get("CLDICE_ITERATIONS", 6))
+# Epochs over which the weight ramps linearly from 0. clDice on a
+# not-yet-vessel-shaped prediction skeletonizes noise; the ramp keeps it
+# quiet until there is something for it to fix. 0 disables the ramp.
+CLDICE_WARMUP_EPOCHS = int(os.environ.get("CLDICE_WARMUP_EPOCHS", 20))
+CLDICE_SMOOTH = 1.0
 
 # --- Debug mode: fast, tiny run to sanity-check the pipeline ---
 DEBUG = os.environ.get("DEBUG", "0") == "1"
@@ -78,6 +122,10 @@ if DEBUG:
     TRAIN_PATCH_BUDGET = 4
     VAL_PATCH_BUDGET = 2
     MAX_EPOCHS = 1
+    # The point of the smoke test is to exercise every code path, and a
+    # warm-up that leaves the weight at ~0 for the single debug epoch would
+    # skip the clDice branch entirely.
+    CLDICE_WARMUP_EPOCHS = 0
     # A handful of patches from a single smoke-test volume don't need 8
     # worker processes per loader (16 total) -- each spawns a fresh
     # torch/monai import, which is what actually eats the RAM.

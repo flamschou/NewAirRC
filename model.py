@@ -38,6 +38,36 @@ def build_dynunet(config):
     return model
 
 
+def load_checkpoint_weights(model, checkpoint_path, map_location=None):
+    """
+    Loads the DynUNet weights out of a PyTorch Lightning checkpoint written
+    by train.py, where the network sits under `self.model` and every key is
+    therefore prefixed with "model.".
+
+    Only the weights: the optimizer state, LR schedule and epoch counter in
+    the checkpoint are ignored. That is what a fine-tuning wants (and what
+    inference wants); a *resume* goes through Trainer.fit(ckpt_path=...)
+    instead.
+
+    Args:
+        model (torch.nn.Module): as returned by build_dynunet.
+        checkpoint_path (str): path to a `.ckpt` file.
+        map_location: forwarded to torch.load.
+    Returns:
+        torch.nn.Module: the same model, weights loaded in place.
+    """
+    checkpoint = torch.load(checkpoint_path, map_location=map_location)
+    state_dict = checkpoint.get("state_dict", checkpoint)
+    prefix = "model."
+    weights = {
+        key[len(prefix):]: value
+        for key, value in state_dict.items()
+        if key.startswith(prefix)
+    }
+    model.load_state_dict(weights)
+    return model
+
+
 def _ensure_conv_bias(model):
     for module in model.modules():
         if isinstance(module, torch.nn.Conv3d) and module.bias is None:

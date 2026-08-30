@@ -20,7 +20,7 @@ from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete, Invertd
 
 import config as cfg
-from model import build_dynunet
+from model import build_dynunet, load_checkpoint_weights
 from transforms import get_inference_transforms
 
 logging.basicConfig(
@@ -41,14 +41,7 @@ def load_model(checkpoint_path, config, device):
         torch.nn.Module: DynUNet in eval mode, weights loaded, on `device`.
     """
     model = build_dynunet(config).to(device)
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    prefix = "model."
-    state_dict = {
-        key[len(prefix):]: value
-        for key, value in checkpoint["state_dict"].items()
-        if key.startswith(prefix)
-    }
-    model.load_state_dict(state_dict)
+    load_checkpoint_weights(model, checkpoint_path, map_location=device)
     model.eval()
     return model
 

@@ -21,8 +21,8 @@ from torch.optim.lr_scheduler import _LRScheduler
 import config as cfg
 import dataset
 import manifest as manifest_module
-from config_loss import DeepSupervisionDiceCELoss
-from model import build_dynunet
+from config_loss import build_loss, cldice_warmup_weight
+from model import build_dynunet, load_checkpoint_weights
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,9 +75,7 @@ class Net(pytorch_lightning.LightningModule):
     def __init__(self, train_ds, val_ds):
         super().__init__()
         self.model = build_dynunet(cfg)
-        self.loss_function = DeepSupervisionDiceCELoss(
-            deep_supr_num=cfg.DEEP_SUPERVISION_LEVELS
-        )
+        self.loss_function = build_loss(cfg)
         self.post_pred = Compose(
             [
                 EnsureType("tensor"),
@@ -96,6 +94,22 @@ class Net(pytorch_lightning.LightningModule):
 
     def forward(self, x):
         return self.model(x)
+
+    def on_train_epoch_start(self):
+        # The clDice weight is ramped in rather than fixed (see
+        # config_loss.cldice_warmup_weight). Logged because val_loss is
+        # computed with the same weight, so it is not comparable across the
+        # warm-up epochs unless you can see where the ramp was.
+        self.loss_function.cldice_weight = cldice_warmup_weight(
+            self.current_epoch, cfg.CLDICE_WEIGHT, cfg.CLDICE_WARMUP_EPOCHS
+        )
+        self.log(
+            "cldice_weight",
+            self.loss_function.cldice_weight,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+        )
 
     def training_step(self, batch, batch_idx):
         images, labels = batch["image"], batch["label"]
@@ -191,8 +205,26 @@ def main():
 
     last_ckpt_path = os.path.join(check_point_dir, "last.ckpt")
     if os.path.exists(last_ckpt_path):
+        # A resume: Lightning restores weights, optimizer, LR schedule and
+        # epoch counter, so this also covers a fine-tuning that got
+        # preempted partway through.
         resume_from_checkpoint = last_ckpt_path
         logging.info(f"Resume training from checkpoint: {resume_from_checkpoint}")
+    elif cfg.FINETUNE_FROM:
+        # A fine-tuning: weights only. Deliberately *not* passed as
+        # Trainer.fit(ckpt_path=...), which would also restore the source
+        # run's optimizer state and epoch counter -- and with the epoch
+        # counter comes its PolyLR schedule, already decayed to ~0 at the
+        # end of that run, so nothing would move.
+        resume_from_checkpoint = None
+        load_checkpoint_weights(net.model, cfg.FINETUNE_FROM, map_location="cpu")
+        logging.info(f"Fine-tuning from weights: {cfg.FINETUNE_FROM}")
+        logging.info(
+            f"  lr={cfg.LEARNING_RATE}, max_epochs={cfg.MAX_EPOCHS}, "
+            f"cldice_weight={cfg.CLDICE_WEIGHT} "
+            f"(warmup {cfg.CLDICE_WARMUP_EPOCHS} epochs, "
+            f"{cfg.CLDICE_ITERATIONS} skeletonization iterations)"
+        )
     else:
         resume_from_checkpoint = None
         logging.info("Start training from scratch")
