@@ -49,8 +49,8 @@ from centerline import DIRECTION_OFFSET
 from compute_dice import (PRED_SUFFIX, class_pairs, dice, parse_rewrite, prediction_path_for,
                           relocate, rewrite_paths)
 from truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
-                      centerline_support, class_mask, limit_terminal_length, plan_cut,
-                      read_volume, retable, select_branches, subdivide, to_grid)
+                      centerline_support, class_mask, limit_terminal_length, peel_terminals,
+                      plan_cut, read_volume, retable, select_branches, subdivide, to_grid)
 
 
 def owner_volumes(plan):
@@ -143,11 +143,10 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
         for floor in args.floors:
             # the plain rule, on both sides: the baseline, and what every
             # rescue is judged against whatever the other knobs are
-            plain = [limit_terminal_length(
-                plan["tree"]["table"],
-                select_branches(plan["tree"]["table"], floor, args.max_generation,
-                                args.ordering, args.min_strahler),
-                args.max_terminal_length) for plan in plans]
+            plain = [trim(plan["tree"]["table"],
+                          select_branches(plan["tree"]["table"], floor, args.max_generation,
+                                          args.ordering, args.min_strahler), args)
+                     for plan in plans]
             support_masks = [None, None]
             # the support is only ever read by a rescue: with no margin in the
             # grid, nothing asks for it, and moving it between the two grids is
@@ -162,6 +161,15 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
             rows.extend(sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor,
                                     reference_ml, voxel_ml, args))
     return rows, None
+
+
+def trim(table, keep, args):
+    """What `truncate.py` does to a selection after `select_branches`: the
+    terminal layers peeled, then what is left of the terminal runs capped.
+    Neither is swept -- they are part of the rule the sweep is run under, so
+    every row of the sweep is a rescue read on the same tips."""
+    keep = peel_terminals(table, keep, args.peel_terminals)
+    return limit_terminal_length(table, keep, args.max_terminal_length)
 
 
 def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, reference_ml, voxel_ml,
@@ -194,13 +202,10 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, refer
                     if margin <= 0 or not plain[1 - index]:
                         keep.append(plain[index])
                         continue
-                    keep.append(limit_terminal_length(
-                        plan["tree"]["table"],
-                        select_branches(
-                            plan["tree"]["table"], floor, args.max_generation,
-                            args.ordering, args.min_strahler, margin=margin,
-                            supported=predicates[index]),
-                        args.max_terminal_length))
+                    keep.append(trim(plan["tree"]["table"], select_branches(
+                        plan["tree"]["table"], floor, args.max_generation,
+                        args.ordering, args.min_strahler, margin=margin,
+                        supported=predicates[index]), args))
                 reference_cut = cut_from(*scoring, kept_nodes(plans[0]["tree"], keep[0]))
                 prediction_cut = cut_from(*owners[1], kept_nodes(plans[1]["tree"], keep[1]))
                 reference_large_ml = float(reference_cut.sum() * voxel_ml)

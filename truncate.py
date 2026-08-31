@@ -29,12 +29,16 @@ The closure is what makes this a truncation rather than a calibre filter: a
 wide distal blob sitting behind a thin branch is a leak, not a large
 vessel, and it goes with its parent.
 
-`--max-terminal-length` cuts the result back further, capping every branch
-of the kept tree past its last bifurcation. Where such a run ends is the
-least reproducible part of a cut -- one median radius against the floor,
-which one missed side branch moves by a whole generation -- so the tips are
-where two segmentations of the same tree disagree most. Off by default,
-since it drops vessel both sides may well have agreed on.
+Two knobs cut the result back further, both acting on the tips of the KEPT
+tree -- the runs past its last bifurcation -- because that is where a cut is
+least reproducible: the calibre that ended a run was measured where partial
+volume weighs most, and whether it ended there at all depends on the
+skeleton having found the junction above it. `--peel-terminals` drops those
+runs whole, one layer at a time, leaving a tree whose every tip is a
+bifurcation both sides saw; `--max-terminal-length` only shortens them.
+Both are off by default: they drop vessel the two sides may well have
+agreed on, and like the floor they have to be reported and applied to both
+sides.
 
 How the cut is turned back into voxels. Every voxel is assigned to the
 nearest centerline node -- a Voronoi partition of the mask by its own
@@ -349,56 +353,27 @@ def select_branches(table, min_diameter, max_generation=None, ordering="generati
     return keep
 
 
-def limit_terminal_length(table, keep, max_length, verbose=False):
+def kept_tree(table, keep):
     """
-    Cuts the terminal runs of a selection back to `max_length` mm.
+    A selection, oriented: (seed, breadth-first order, parent, children).
 
-    A terminal run is what is left of a branch of the KEPT tree past its
-    last bifurcation: the chain of pieces running from a junction out to a
-    tip without dividing again. `select_branches` ends such a run where the
-    calibre finally falls under the floor, and where that happens is the
-    least reliable thing about a cut -- one median radius against a
-    threshold, read on the pieces where partial volume weighs most, and a
-    single missed side branch stretches a run by a whole generation because
-    the junction that should have ended it is not in the skeleton. Two
-    segmentations of one tree therefore stop their runs in different places
-    even where they agree about every vessel that divides, and every
-    millimetre of that disagreement is read as a miss.
+    The topology the two trimming rules below are read on is the topology of
+    the CUT, not of the tree it was cut from. A branch that divides in the
+    full tree is a tip once everything under it has gone, and it is as a tip
+    that it is unreliable -- so the parent-child relation has to be rebuilt
+    on `keep` alone, every time `keep` changes.
 
-    Capping the run trades those tips away: what is kept is the same tree
-    minus its last centimetre or so of periphery -- the part the two sides
-    agree on least, and the part a surface-driven metric is most sensitive
-    to. What is dropped is real vessel, so the cap belongs with the floor in
-    whatever is reported, and it has to be applied to BOTH sides of a
-    comparison, like `--min-diameter`.
-
-    A run is trimmed piece by piece and never emptied: a piece is kept while
-    the run's length up to its PROXIMAL end is under `max_length`, so a run
-    keeps at least its first piece and overshoots the cap by at most one.
-    The resolution of the trim is therefore `--cut-step`, and under
-    `--cut-step 0` -- one piece per whole branch -- it can only drop
-    terminal branches entire.
-
-    The run carrying the seed (the widest branch, what the closure was grown
-    from) is never trimmed. On a healthy tree it is not terminal in the
-    first place, since the trunk divides; when it is -- a cut that came back
-    as a single chain, a tree that fell apart -- the trunk is the last thing
-    worth shortening, and the cap would leave a stump where the cut is
-    otherwise at its most trustworthy.
-
-    `max_length` of 0 or None returns the selection untouched.
+    Rebuilt from the same seed the closure was grown from -- the widest
+    branch, not the root, for the reason `select_branches` gives -- and
+    through the same neighbour rule, two pieces being adjacent when they
+    share an end node.
     """
-    if not keep or not max_length or max_length <= 0:
-        return keep
-
     at_node = defaultdict(list)
     for branch in keep:
         entry = table[branch]
         at_node[entry["nodes"][0]].append(branch)
         at_node[entry["nodes"][-1]].append(branch)
 
-    # orient the kept tree away from the branch `select_branches` grew it
-    # from, so that "past the last bifurcation" means past it going outwards
     seed = max(keep, key=lambda branch: table[branch]["calibre_mm"])
     order, entered, parent, children = [seed], {seed: None}, {seed: None}, defaultdict(list)
     queue = deque(order)
@@ -414,26 +389,143 @@ def limit_terminal_length(table, keep, max_length, verbose=False):
                     children[branch].append(neighbour)
                     order.append(neighbour)
                     queue.append(neighbour)
+    return seed, order, parent, children
 
-    # a piece is on a terminal run when nothing below it divides
+
+def terminal_runs(table, keep):
+    """
+    The terminal runs of a selection: every chain of pieces that leaves the
+    last bifurcation of the KEPT tree and reaches a tip without dividing
+    again, listed head first.
+
+    A run, not a piece, is the object both trimming rules act on. `--cut-step`
+    cuts branches into pieces so that the CALIBRE is judged per millimetre,
+    and a piece is the right unit for that because a calibre is a local
+    measurement. Being terminal is not: it is a property of the whole branch
+    between two bifurcations, and the last piece of a run is terminal only in
+    the sense that the run is.
+
+    The run carrying the seed is not returned. On a healthy tree it is not
+    terminal in the first place, since the trunk divides; when it is -- a cut
+    that came back as a single chain, a tree that fell apart -- the trunk is
+    the last thing worth removing, and it is what keeps a peel from ever
+    emptying a selection.
+    """
+    if not keep:
+        return []
+
+    seed, order, parent, children = kept_tree(table, keep)
+
+    # nothing below a terminal run divides
     terminal = {}
     for branch in reversed(order):
         below = children[branch]
         terminal[branch] = not below or (len(below) == 1 and terminal[below[0]])
 
-    drop = set()
+    runs = []
     for branch in order:
         # the head of a run is the first piece past the last bifurcation
         if branch == seed or not terminal[branch] or terminal[parent[branch]]:
             continue
-        walked, piece = 0.0, branch
-        while True:
+        run, piece = [branch], branch
+        while children[piece]:
+            piece = children[piece][0]
+            run.append(piece)
+        runs.append(run)
+    return runs
+
+
+def peel_terminals(table, keep, layers, verbose=False):
+    """
+    Removes the terminal branches of a selection, `layers` times over.
+
+    Why a whole layer. A tip of a cut is where the two things this file
+    warns about meet: the calibre that ended the run was measured on the
+    pieces where partial volume weighs most, and whether the run ended there
+    at all depends on the skeleton having found the junction above it. So
+    the tips are what two segmentations of one tree disagree about even when
+    they agree about every vessel that divides, and a Dice, driven by
+    surface, is read mostly on them. Peeling removes that generation
+    outright, on both sides, and leaves a tree whose every tip is a
+    bifurcation both sides did see.
+
+    What leaves is one ORDER and not one generation: the runs returned by
+    `terminal_runs` are exactly the order-1 class of the kept tree counted
+    from the tips -- Strahler's order, recomputed here on the cut -- so the
+    branches that go are all of the same order however deep they sit. A
+    short collateral coming straight off the trunk is a tip, is order 1, and
+    leaves with the rest; the generation it sits at, which one junction the
+    skeleton missed would change, plays no part. That is what makes the peel
+    reproducible between two segmentations: they need not have found the
+    same number of generations, only the same bifurcations.
+
+    Not to be confused with `--min-strahler`, which reads `strahler_dd` off
+    the FULL tree, before the truncation: there, no kept branch is order 1,
+    since every one of them had a periphery under it.
+
+    Peeling twice is peeling once, twice: what became a tip in the first
+    layer is one of the second. The run carrying the seed is never peeled,
+    so a selection cannot be emptied however many layers are asked for --
+    a tree that is down to its trunk simply stops shrinking.
+
+    `layers` of 0 or None returns the selection untouched.
+    """
+    if not keep or not layers or layers <= 0:
+        return keep
+
+    peeled, gone = keep, []
+    for _ in range(int(layers)):
+        runs = terminal_runs(table, peeled)
+        if not runs:
+            break
+        gone.extend(runs)
+        peeled = peeled - {piece for run in runs for piece in run}
+
+    if verbose and gone:
+        length = sum(table[piece]["length_mm"] for run in gone for piece in run)
+        print(f"  peeled {len(gone)} terminal branch(es) off the cut, "
+              f"{length:.0f} mm of centerline")
+    return peeled
+
+
+def limit_terminal_length(table, keep, max_length, verbose=False):
+    """
+    Cuts the terminal runs of a selection back to `max_length` mm.
+
+    The gentler half of `peel_terminals`: the same object -- what is left of
+    a branch of the KEPT tree past its last bifurcation -- and the same
+    reason, but the run is shortened instead of dropped. Where a run ends is
+    the least reproducible thing about a cut, one median radius against the
+    floor, and a single missed side branch stretches a run by a whole
+    generation because the junction that should have ended it is not in the
+    skeleton. Capping bounds how far that disagreement can run: what is kept
+    is the same tree minus its last centimetre or so of periphery, the part
+    the two sides agree on least and the part a surface-driven metric is
+    most sensitive to.
+
+    What is dropped is real vessel, so the cap belongs with the floor in
+    whatever is reported, and it has to be applied to BOTH sides of a
+    comparison, like `--min-diameter`.
+
+    A run is trimmed piece by piece and never emptied: a piece is kept while
+    the run's length up to its PROXIMAL end is under `max_length`, so a run
+    keeps at least its first piece and overshoots the cap by at most one.
+    The resolution of the trim is therefore `--cut-step`, and under
+    `--cut-step 0` -- one piece per whole branch -- it can only drop
+    terminal branches entire, which is a peel by another name.
+
+    `max_length` of 0 or None returns the selection untouched.
+    """
+    if not keep or not max_length or max_length <= 0:
+        return keep
+
+    drop = set()
+    for run in terminal_runs(table, keep):
+        walked = 0.0
+        for piece in run:
             if walked >= max_length:
                 drop.add(piece)
             walked += table[piece]["length_mm"]
-            if not children[piece]:
-                break
-            piece = children[piece][0]
 
     if verbose and drop:
         print(f"  trimmed {len(drop)} piece(s), "
@@ -676,6 +768,7 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
     keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                            args.ordering, args.min_strahler)
     warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+    keep = peel_terminals(plan["tree"]["table"], keep, args.peel_terminals, verbose=verbose)
     keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length,
                                  verbose=verbose)
     return cut_plan(plan, keep, row, verbose=verbose), row
@@ -738,6 +831,8 @@ def cut_settings(classes, args, source=None, counterpart=None):
     # written only when it is on: an absent key and a null one describe the
     # same cut, and always writing it would invalidate every sidecar already
     # on disk -- a cohort's worth of skeletonizations -- for a knob nobody set
+    if args.peel_terminals:
+        settings["peel_terminals"] = args.peel_terminals
     if args.max_terminal_length:
         settings["max_terminal_length"] = args.max_terminal_length
     if source is not None and os.path.exists(source):
@@ -930,6 +1025,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
             keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                                    args.ordering, args.min_strahler)
             warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+            keep = peel_terminals(plan["tree"]["table"], keep, args.peel_terminals)
             keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length)
             plain.append(keep)
             first.append(keep_voxels(plan, keep))
@@ -960,9 +1056,10 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
                 keep = select_branches(
                     branches, args.min_diameter, args.max_generation, args.ordering,
                     args.min_strahler, margin=args.rescue_margin, supported=supported)
-                # the cap is applied to the rescued selection and not to what
+                # both are applied to the rescued selection and not to what
                 # the rescue added: a rescued branch can turn a run that was
                 # terminal into an ordinary one, and the run is the object
+                keep = peel_terminals(branches, keep, args.peel_terminals)
                 keep = limit_terminal_length(branches, keep, args.max_terminal_length)
                 rescued = keep - plain[index]
 
@@ -1070,6 +1167,18 @@ def add_cut_arguments(parser):
                           "from the tips instead of down from the root. Off by default: it is "
                           "read off the leaves, and in vivo the leaves are wherever the "
                           "segmentation ran out of contrast, not where the tree ends")
+    cut.add_argument("--peel-terminals", type=int, default=0, metavar="N",
+                     help="Also drop the terminal branches of the KEPT tree, N layers of them. A "
+                          "layer is every run past the last bifurcation OF THE CUT -- the order-1 "
+                          "class counted from the tips, so everything that leaves is of the same "
+                          "order however deep it sits, and a tip is removed for being a tip and "
+                          "not for its generation, which one junction the skeleton missed would "
+                          "change. What is left is a tree whose every tip is a bifurcation both "
+                          "sides saw, which is the point: a tip is where the calibre was measured "
+                          "worst and where two segmentations of one tree agree least. Not "
+                          "--min-strahler, which reads the order off the full tree, before the "
+                          "truncation. Drops real vessel: report it, and pass the same value on "
+                          "both sides. Default: 0")
     cut.add_argument("--max-terminal-length", type=float, default=None, metavar="MM",
                      help="Also cut every terminal run of the KEPT tree -- the chain of pieces "
                           "past its last bifurcation -- back to this length. Where a run ends is "
@@ -1191,6 +1300,7 @@ def main():
           + ", ".join(f"{name} ({'any nonzero' if values is None else values})"
                       for name, values in classes)
           + f", cut at {args.min_diameter} mm"
+          + (f", {args.peel_terminals} terminal layer(s) peeled" if args.peel_terminals else "")
           + (f", terminal runs capped at {args.max_terminal_length} mm"
              if args.max_terminal_length else ""))
 
