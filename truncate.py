@@ -29,6 +29,13 @@ The closure is what makes this a truncation rather than a calibre filter: a
 wide distal blob sitting behind a thin branch is a leak, not a large
 vessel, and it goes with its parent.
 
+`--max-terminal-length` cuts the result back further, capping every branch
+of the kept tree past its last bifurcation. Where such a run ends is the
+least reproducible part of a cut -- one median radius against the floor,
+which one missed side branch moves by a whole generation -- so the tips are
+where two segmentations of the same tree disagree most. Off by default,
+since it drops vessel both sides may well have agreed on.
+
 How the cut is turned back into voxels. Every voxel is assigned to the
 nearest centerline node -- a Voronoi partition of the mask by its own
 skeleton -- and kept when that node belongs to a kept branch and lies
@@ -342,6 +349,99 @@ def select_branches(table, min_diameter, max_generation=None, ordering="generati
     return keep
 
 
+def limit_terminal_length(table, keep, max_length, verbose=False):
+    """
+    Cuts the terminal runs of a selection back to `max_length` mm.
+
+    A terminal run is what is left of a branch of the KEPT tree past its
+    last bifurcation: the chain of pieces running from a junction out to a
+    tip without dividing again. `select_branches` ends such a run where the
+    calibre finally falls under the floor, and where that happens is the
+    least reliable thing about a cut -- one median radius against a
+    threshold, read on the pieces where partial volume weighs most, and a
+    single missed side branch stretches a run by a whole generation because
+    the junction that should have ended it is not in the skeleton. Two
+    segmentations of one tree therefore stop their runs in different places
+    even where they agree about every vessel that divides, and every
+    millimetre of that disagreement is read as a miss.
+
+    Capping the run trades those tips away: what is kept is the same tree
+    minus its last centimetre or so of periphery -- the part the two sides
+    agree on least, and the part a surface-driven metric is most sensitive
+    to. What is dropped is real vessel, so the cap belongs with the floor in
+    whatever is reported, and it has to be applied to BOTH sides of a
+    comparison, like `--min-diameter`.
+
+    A run is trimmed piece by piece and never emptied: a piece is kept while
+    the run's length up to its PROXIMAL end is under `max_length`, so a run
+    keeps at least its first piece and overshoots the cap by at most one.
+    The resolution of the trim is therefore `--cut-step`, and under
+    `--cut-step 0` -- one piece per whole branch -- it can only drop
+    terminal branches entire.
+
+    The run carrying the seed (the widest branch, what the closure was grown
+    from) is never trimmed. On a healthy tree it is not terminal in the
+    first place, since the trunk divides; when it is -- a cut that came back
+    as a single chain, a tree that fell apart -- the trunk is the last thing
+    worth shortening, and the cap would leave a stump where the cut is
+    otherwise at its most trustworthy.
+
+    `max_length` of 0 or None returns the selection untouched.
+    """
+    if not keep or not max_length or max_length <= 0:
+        return keep
+
+    at_node = defaultdict(list)
+    for branch in keep:
+        entry = table[branch]
+        at_node[entry["nodes"][0]].append(branch)
+        at_node[entry["nodes"][-1]].append(branch)
+
+    # orient the kept tree away from the branch `select_branches` grew it
+    # from, so that "past the last bifurcation" means past it going outwards
+    seed = max(keep, key=lambda branch: table[branch]["calibre_mm"])
+    order, entered, parent, children = [seed], {seed: None}, {seed: None}, defaultdict(list)
+    queue = deque(order)
+    while queue:
+        branch = queue.popleft()
+        entry = table[branch]
+        for end in (entry["nodes"][0], entry["nodes"][-1]):
+            if end == entered[branch]:
+                continue
+            for neighbour in at_node[end]:
+                if neighbour not in entered:
+                    entered[neighbour], parent[neighbour] = end, branch
+                    children[branch].append(neighbour)
+                    order.append(neighbour)
+                    queue.append(neighbour)
+
+    # a piece is on a terminal run when nothing below it divides
+    terminal = {}
+    for branch in reversed(order):
+        below = children[branch]
+        terminal[branch] = not below or (len(below) == 1 and terminal[below[0]])
+
+    drop = set()
+    for branch in order:
+        # the head of a run is the first piece past the last bifurcation
+        if branch == seed or not terminal[branch] or terminal[parent[branch]]:
+            continue
+        walked, piece = 0.0, branch
+        while True:
+            if walked >= max_length:
+                drop.add(piece)
+            walked += table[piece]["length_mm"]
+            if not children[piece]:
+                break
+            piece = children[piece][0]
+
+    if verbose and drop:
+        print(f"  trimmed {len(drop)} piece(s), "
+              f"{sum(table[b]['length_mm'] for b in drop):.0f} mm of centerline, off the terminal "
+              f"runs past {max_length} mm")
+    return keep - drop
+
+
 def voxel_owners(mask, affine, tree, sleeve):
     """
     Which centerline node each voxel of the mask belongs to, and whether it
@@ -576,6 +676,8 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
     keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                            args.ordering, args.min_strahler)
     warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+    keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length,
+                                 verbose=verbose)
     return cut_plan(plan, keep, row, verbose=verbose), row
 
 
@@ -633,6 +735,11 @@ def cut_settings(classes, args, source=None, counterpart=None):
         "keep_cycles": bool(args.keep_cycles),
         "root": list(args.root) if args.root else None,
     }
+    # written only when it is on: an absent key and a null one describe the
+    # same cut, and always writing it would invalidate every sidecar already
+    # on disk -- a cohort's worth of skeletonizations -- for a knob nobody set
+    if args.max_terminal_length:
+        settings["max_terminal_length"] = args.max_terminal_length
     if source is not None and os.path.exists(source):
         settings["source"] = fingerprint(source)
     margin = getattr(args, "rescue_margin", 0.0) if counterpart else 0.0
@@ -823,6 +930,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
             keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                                    args.ordering, args.min_strahler)
             warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
+            keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length)
             plain.append(keep)
             first.append(keep_voxels(plan, keep))
 
@@ -852,6 +960,10 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
                 keep = select_branches(
                     branches, args.min_diameter, args.max_generation, args.ordering,
                     args.min_strahler, margin=args.rescue_margin, supported=supported)
+                # the cap is applied to the rescued selection and not to what
+                # the rescue added: a rescued branch can turn a run that was
+                # terminal into an ordinary one, and the run is the object
+                keep = limit_terminal_length(branches, keep, args.max_terminal_length)
                 rescued = keep - plain[index]
 
             row = rows[index]
@@ -958,6 +1070,16 @@ def add_cut_arguments(parser):
                           "from the tips instead of down from the root. Off by default: it is "
                           "read off the leaves, and in vivo the leaves are wherever the "
                           "segmentation ran out of contrast, not where the tree ends")
+    cut.add_argument("--max-terminal-length", type=float, default=None, metavar="MM",
+                     help="Also cut every terminal run of the KEPT tree -- the chain of pieces "
+                          "past its last bifurcation -- back to this length. Where a run ends is "
+                          "the least reproducible part of a cut: one median radius against the "
+                          "floor, and one side branch the skeleton missed stretches a run by a "
+                          "whole generation, so two segmentations stop theirs in different places "
+                          "even where they agree about every vessel that divides. The cap trades "
+                          "those tips away; it drops real vessel, so report it and pass the same "
+                          "value on both sides. Trimmed in steps of --cut-step, so a run overshoots "
+                          "by at most one piece. Off by default; 10 is a reasonable value")
     cut.add_argument("--sleeve", type=float, default=1.5, metavar="FACTOR",
                      help="How far from the axis, in local radii, a voxel may sit and still belong "
                           "to its branch. Under 1 it cuts into the vessel itself; well over it, a "
@@ -1068,7 +1190,9 @@ def main():
     print(f"{len(paths)} file(s), classes: "
           + ", ".join(f"{name} ({'any nonzero' if values is None else values})"
                       for name, values in classes)
-          + f", cut at {args.min_diameter} mm")
+          + f", cut at {args.min_diameter} mm"
+          + (f", terminal runs capped at {args.max_terminal_length} mm"
+             if args.max_terminal_length else ""))
 
     rows = []
     for path in paths:
