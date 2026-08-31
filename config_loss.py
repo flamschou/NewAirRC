@@ -18,6 +18,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from monai.losses import DiceCELoss
 from monai.networks.utils import one_hot
@@ -108,11 +109,18 @@ class SoftSkeletonize(nn.Module):
     enters the skeleton. At TARGET_SPACING = 1 mm and vessels up to ~10 mm
     across, that is 5; the cost is linear in num_iter, so there is no
     reason to go far beyond it.
+
+    Memory, not compute, is the binding constraint here: the thinning is a
+    chain of ~20 elementwise/pooling ops per iteration, each of which
+    autograd would keep a full-resolution copy of. `use_checkpoint` trades
+    that for one recomputation of each iteration during the backward pass
+    -- see the comment on the loop below.
     """
 
-    def __init__(self, num_iter: int = 6):
+    def __init__(self, num_iter: int = 6, use_checkpoint: bool = True):
         super().__init__()
         self.num_iter = num_iter
+        self.use_checkpoint = use_checkpoint
 
     @staticmethod
     def soft_erode(img: torch.Tensor) -> torch.Tensor:
@@ -125,8 +133,22 @@ class SoftSkeletonize(nn.Module):
     def soft_dilate(img: torch.Tensor) -> torch.Tensor:
         return F.max_pool3d(img, (3, 3, 3), (1, 1, 1), (1, 1, 1))
 
-    def soft_open(self, img: torch.Tensor) -> torch.Tensor:
-        return self.soft_dilate(self.soft_erode(img))
+    def _thin(self, img: torch.Tensor, skeleton: torch.Tensor):
+        """
+        One thinning iteration: erode once, add to the skeleton whatever the
+        opening of `img` removed, and hand the eroded volume to the next
+        iteration.
+
+        The single erosion is not a shortcut. The textbook formulation
+        erodes twice per iteration -- once to shrink the volume, once more
+        inside `open = dilate(erode(.))` -- but the second erosion of
+        iteration j computes exactly the first erosion of iteration j+1, so
+        keeping the eroded volume around makes the two the same tensor.
+        """
+        eroded = self.soft_erode(img)
+        delta = F.relu(img - self.soft_dilate(eroded))
+        # soft union of skeleton and delta: a + b - a*b
+        return eroded, skeleton + F.relu(delta - skeleton * delta)
 
     def forward(self, img: torch.Tensor) -> torch.Tensor:
         """
@@ -136,12 +158,20 @@ class SoftSkeletonize(nn.Module):
         Returns:
             torch.Tensor: same shape, the soft skeleton.
         """
-        skeleton = F.relu(img - self.soft_open(img))
-        for _ in range(self.num_iter):
-            img = self.soft_erode(img)
-            delta = F.relu(img - self.soft_open(img))
-            # soft union of skeleton and delta: a + b - a*b
-            skeleton = skeleton + F.relu(delta - skeleton * delta)
+        skeleton = torch.zeros_like(img)
+        for _ in range(self.num_iter + 1):
+            if self.use_checkpoint and torch.is_grad_enabled() and img.requires_grad:
+                # Checkpointing per iteration, not around the whole loop:
+                # autograd then holds two full-resolution tensors per
+                # iteration instead of ~20, and the backward pass only ever
+                # rebuilds one iteration's graph at a time. Around the whole
+                # loop it would rebuild all of them at once, which is the
+                # peak we are trying to avoid in the first place.
+                img, skeleton = checkpoint(
+                    self._thin, img, skeleton, use_reentrant=False
+                )
+            else:
+                img, skeleton = self._thin(img, skeleton)
         return skeleton
 
 
@@ -166,6 +196,16 @@ class SoftClDiceLoss(nn.Module):
     POS_NEG_SAMPLE_RATIO = (1, 1) roughly half the patches hold little or
     no foreground, and a per-patch mean would be dominated by their
     degenerate (smooth / smooth) ratios.
+
+    `max_patches` caps how many patches of the batch the term looks at.
+    RandCropByPosNegLabeld returns num_samples patches per item and
+    list_data_collate flattens them, so the batch reaching the loss is
+    BATCH_SIZE x num_samples patches -- 24 of 128^3 in the default setup,
+    which is more full-resolution volume than the skeletonization can hold
+    a graph for. Since the term is a batch-level statistic anyway, scoring
+    a random subset of the patches is a noisier estimate of the same
+    quantity, not a different one. The subset is random while training and
+    the first `max_patches` in eval, so val_loss stays reproducible.
     """
 
     def __init__(
@@ -173,11 +213,13 @@ class SoftClDiceLoss(nn.Module):
         num_iter: int = 6,
         smooth: float = 1.0,
         include_background: bool = False,
+        max_patches: int = 0,
     ):
         super().__init__()
         self.skeletonize = SoftSkeletonize(num_iter=num_iter)
         self.smooth = smooth
         self.include_background = include_background
+        self.max_patches = max_patches
 
     def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         """
@@ -191,6 +233,14 @@ class SoftClDiceLoss(nn.Module):
         num_classes = logits.shape[1]
         first_class = 0 if self.include_background else 1
 
+        if 0 < self.max_patches < logits.shape[0]:
+            if self.training:
+                keep = torch.randperm(logits.shape[0], device=logits.device)
+                keep = keep[: self.max_patches]
+            else:
+                keep = torch.arange(self.max_patches, device=logits.device)
+            logits, labels = logits[keep], labels[keep]
+
         with _force_fp32(logits.device.type):
             probabilities = torch.softmax(logits.float(), dim=1)
             target = one_hot(labels, num_classes=num_classes, dim=1).float()
@@ -201,7 +251,9 @@ class SoftClDiceLoss(nn.Module):
                 truth = target[:, class_index : class_index + 1]
 
                 skeleton_prediction = self.skeletonize(prediction)
-                skeleton_truth = self.skeletonize(truth)
+                # the label is a constant: no graph, no saved activations
+                with torch.no_grad():
+                    skeleton_truth = self.skeletonize(truth)
 
                 topology_precision = (
                     torch.sum(skeleton_prediction * truth) + self.smooth
@@ -243,11 +295,14 @@ class DeepSupervisionDiceCEClDiceLoss(DeepSupervisionDiceCELoss):
         cldice_weight: float = 0.0,
         cldice_iterations: int = 6,
         cldice_smooth: float = 1.0,
+        cldice_max_patches: int = 0,
         **kwargs,
     ):
         super().__init__(deep_supr_num, **kwargs)
         self.cldice_loss = SoftClDiceLoss(
-            num_iter=cldice_iterations, smooth=cldice_smooth
+            num_iter=cldice_iterations,
+            smooth=cldice_smooth,
+            max_patches=cldice_max_patches,
         )
         self.cldice_weight = float(cldice_weight)
 
@@ -306,4 +361,5 @@ def build_loss(config):
         ),
         cldice_iterations=config.CLDICE_ITERATIONS,
         cldice_smooth=config.CLDICE_SMOOTH,
+        cldice_max_patches=config.CLDICE_MAX_PATCHES,
     )

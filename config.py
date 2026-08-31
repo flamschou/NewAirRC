@@ -114,6 +114,14 @@ CLDICE_ITERATIONS = int(os.environ.get("CLDICE_ITERATIONS", 6))
 # not-yet-vessel-shaped prediction skeletonizes noise; the ramp keeps it
 # quiet until there is something for it to fix. 0 disables the ramp.
 CLDICE_WARMUP_EPOCHS = int(os.environ.get("CLDICE_WARMUP_EPOCHS", 20))
+# How many patches of the batch the term scores. The batch that reaches the
+# loss is BATCH_SIZE x num_samples patches (RandCropByPosNegLabeld returns
+# num_samples per item and list_data_collate flattens them): 24 patches of
+# 128^3 in the default setup, whose skeletonization graph does not fit in
+# 93 GiB next to the network's own activations. clDice is a batch-level
+# statistic, so scoring a random subset is a noisier estimate of the same
+# quantity. 0 means no cap.
+CLDICE_MAX_PATCHES = int(os.environ.get("CLDICE_MAX_PATCHES", 8))
 CLDICE_SMOOTH = 1.0
 
 # --- Debug mode: fast, tiny run to sanity-check the pipeline ---

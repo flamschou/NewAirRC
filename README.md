@@ -115,13 +115,43 @@ Settings, all in `config.py` and all overridable from the environment:
 | `CLDICE_WEIGHT` | `0.0` | lambda above. **0 disables the term** and reproduces the original loss exactly. `0.5` is the clDice paper's value for tubular structures. |
 | `CLDICE_ITERATIONS` | `6` | soft-skeletonization iterations. Must be >= the largest vessel radius in voxels, or thick vessels never thin down to a curve: ~10 mm across at `TARGET_SPACING = 1 mm` is a radius of 5, plus one for margin. |
 | `CLDICE_WARMUP_EPOCHS` | `20` | epochs over which the weight ramps linearly from 0. The skeleton of a not-yet-vessel-shaped prediction is noise, and clDice on noise pulls towards thin fragmented masks; the ramp keeps the term quiet until there is something for it to fix. |
+| `CLDICE_MAX_PATCHES` | `8` | how many patches of the batch the term scores (0 = all). See *Why this term is memory-hungry* below. |
 
 Two deliberate restrictions in the implementation: the term is applied to the
 **full-resolution deep-supervision level only** (at 1/2 and 1/4 resolution the
 thinnest vessels are sub-voxel, so their "skeleton" is a downsampling
 artifact), and it is computed in **fp32** even under `precision="16-mixed"`
-(the pooling chain ends in differences of nearly-equal numbers). It costs
-about +20% per training step.
+(the pooling chain ends in differences of nearly-equal numbers).
+
+### Why this term is memory-hungry
+
+Worth knowing before turning any of the knobs up, because it OOMed a 93 GiB
+H100 on the first try. The thinning is a chain of ~20 pooling and elementwise
+ops per iteration, and autograd keeps a full-resolution copy of nearly every
+intermediate. The batch that reaches the loss is not `BATCH_SIZE`:
+`RandCropByPosNegLabeld` returns `num_samples` patches per item and
+`list_data_collate` flattens them, so the default setup hands the loss **24
+patches of 128³**. A naive implementation keeps **79 GiB** of graph for that,
+on top of the network's own activations.
+
+Three things bring it down to ~2 GiB, none of which changes the value of the
+loss:
+
+| | graph size |
+| --- | --- |
+| naive implementation | 79.3 GiB |
+| + erosion reused across iterations (the textbook loop erodes twice per iteration, but the second erosion of iteration *j* is the first of *j+1*) | 51.2 GiB |
+| + gradient checkpointing per thinning iteration | 6.6 GiB |
+| + `CLDICE_MAX_PATCHES=8` | 2.2 GiB |
+
+The patch cap is the only one that changes the loss *statistically*: clDice
+is a batch-level ratio, so scoring 8 of the 24 patches is a noisier estimate
+of the same quantity, not a different quantity. The subset is drawn at random
+while training and is the first 8 patches in eval, so `val_loss` stays
+reproducible. The other two are exact — the skeleton is bit-identical to the
+textbook formulation and the gradients match to 0.
+
+With all three, the term costs about **+4%** per training step.
 
 ### Fine-tuning rather than retraining
 
@@ -142,8 +172,10 @@ EXPERIMENT_NAME="${BASE_EXPERIMENT}_cldice_ft"   # own logs/checkpoints
 FINETUNE_FROM=".../checkpoints/$BASE_EXPERIMENT/run/last.ckpt"
 CACHE_NAME="$BASE_EXPERIMENT"                     # share the dataset cache
 CLDICE_WEIGHT=0.5
+CLDICE_MAX_PATCHES=8
 LEARNING_RATE=1e-4                                # a tenth of the baseline
 MAX_EPOCHS=150
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
 Three things that would otherwise be easy to get wrong, and that the code now

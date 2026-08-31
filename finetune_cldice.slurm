@@ -43,6 +43,15 @@ export CACHE_NAME="$BASE_EXPERIMENT"
 export CLDICE_WEIGHT="0.5"
 export CLDICE_ITERATIONS="6"
 export CLDICE_WARMUP_EPOCHS="20"
+# The batch reaching the loss is BATCH_SIZE x num_samples = 24 patches of
+# 128^3; the term scores 8 of them per step. Raising this raises peak GPU
+# memory steeply -- the run OOMed at 24 on a 93 GiB H100.
+export CLDICE_MAX_PATCHES="8"
+
+# The clDice backward recomputes each thinning iteration (gradient
+# checkpointing), so it allocates and frees full-resolution buffers in a
+# tight loop. Expandable segments keep that from fragmenting the pool.
+export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
 # A tenth of the baseline LR, and a short schedule. The point is to reconnect
 # broken branches, not to relearn the segmentation -- at 1e-3 the fine-tuning
