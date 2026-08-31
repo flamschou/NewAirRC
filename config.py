@@ -77,7 +77,19 @@ POS_NEG_SAMPLE_RATIO = (1, 1)
 
 # --- Training ---
 BATCH_SIZE = 6
-NUM_WORKERS = 8
+NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 8))
+# The validation loader gets fewer: it runs 6 batches per epoch against the
+# training loader's 28, and every worker holds its prefetched batches in
+# /dev/shm (see PREFETCH_FACTOR).
+VAL_NUM_WORKERS = int(os.environ.get("VAL_NUM_WORKERS", max(1, NUM_WORKERS // 4)))
+# Batches per worker held ready. This is the main /dev/shm knob: a training
+# batch is BATCH_SIZE x num_samples = 24 patches of 128^3, image and label,
+# i.e. ~0.4 GiB, and every prefetched batch sits in shared memory until the
+# main process consumes it. At the torch default of 2 the two loaders reserve
+# ~10 GiB of /dev/shm between them, which is enough to exhaust it on a node
+# whose /dev/shm is sized from the job's memory cgroup. 28 steps per epoch
+# does not need that much read-ahead.
+PREFETCH_FACTOR = int(os.environ.get("PREFETCH_FACTOR", 1))
 # LEARNING_RATE and MAX_EPOCHS are read from the environment because a
 # fine-tuning run is exactly the same setup with those two turned down; the
 # PolyLR schedule is rebuilt from them, so a fine-tuning restarts the decay
@@ -138,6 +150,7 @@ if DEBUG:
     # worker processes per loader (16 total) -- each spawns a fresh
     # torch/monai import, which is what actually eats the RAM.
     NUM_WORKERS = 0
+    VAL_NUM_WORKERS = 0
     # The smoke test only needs to exercise the pipeline mechanics, not
     # produce a useful model -- the real memory/compute hog is the forward
     # pass itself (128^3 patches through a 6-level, up-to-320-filter

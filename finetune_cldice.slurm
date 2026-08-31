@@ -53,6 +53,14 @@ export CLDICE_MAX_PATCHES="8"
 # tight loop. Expandable segments keep that from fragmenting the pool.
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 
+# Dataloader shared memory: a training batch is 24 patches of 128^3 (image
+# and label), ~0.4 GiB, and every prefetched batch sits in /dev/shm until the
+# main process takes it. The config defaults (PREFETCH_FACTOR=1,
+# VAL_NUM_WORKERS=NUM_WORKERS/4, persistent workers) hold that to ~3.6 GiB.
+# Turn PREFETCH_FACTOR and VAL_NUM_WORKERS down first if a node still runs
+# out -- check what it offers with `df -h /dev/shm`.
+export NUM_WORKERS="8"
+
 # A tenth of the baseline LR, and a short schedule. The point is to reconnect
 # broken branches, not to relearn the segmentation -- at 1e-3 the fine-tuning
 # would walk away from the voxel-level accuracy already in the checkpoint.

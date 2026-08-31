@@ -47,20 +47,30 @@ def build_dataloaders(config, train_ds, val_ds):
     Returns:
         tuple[DataLoader, DataLoader]: (train_loader, val_loader)
     """
-    train_loader = DataLoader(
-        train_ds,
+    # persistent_workers because an epoch is only 28 steps: without it the
+    # 16 worker processes are torn down and respawned every ~35 seconds, and
+    # each generation leaves shared-memory segments to be reclaimed. Under
+    # the "file_system" sharing strategy train.py selects, that churn is what
+    # eventually exhausts /dev/shm mid-run.
+    common = dict(
         batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
         pin_memory=True,
         collate_fn=list_data_collate,
-        shuffle=True,
     )
+    if config.NUM_WORKERS > 0:
+        common.update(
+            prefetch_factor=config.PREFETCH_FACTOR, persistent_workers=True
+        )
+
+    train_loader = DataLoader(
+        train_ds, num_workers=config.NUM_WORKERS, shuffle=True, **common
+    )
+
+    val_common = dict(common)
+    if config.VAL_NUM_WORKERS == 0:
+        val_common.pop("prefetch_factor", None)
+        val_common.pop("persistent_workers", None)
     val_loader = DataLoader(
-        val_ds,
-        batch_size=config.BATCH_SIZE,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=True,
-        collate_fn=list_data_collate,
-        shuffle=False,
+        val_ds, num_workers=config.VAL_NUM_WORKERS, shuffle=False, **val_common
     )
     return train_loader, val_loader

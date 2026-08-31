@@ -85,6 +85,41 @@ directory, and sets `DATASET_ROOT` (checkpoints/logs/cache) and
 `finetune_cldice.slurm` is the same job with the continuity term switched on
 — see the next section.
 
+### Dataloader workers and `/dev/shm`
+
+A training batch is not `BATCH_SIZE` volumes: `RandCropByPosNegLabeld` returns
+`num_samples` patches per item and `list_data_collate` flattens them, so the
+loader hands out `BATCH_SIZE x num_samples` = **24 patches of 128³**, image and
+label, ~0.4 GiB per batch. Every prefetched batch sits in `/dev/shm` until the
+main process consumes it, and `train.py` selects the `file_system` sharing
+strategy, under which those segments are files.
+
+At torch's default `prefetch_factor=2` with 8 workers on each of the two
+loaders, that reserves ~10 GiB of `/dev/shm` at steady state, and the 28-step
+epochs respawn all 16 workers every ~35 seconds, each generation leaving
+segments to be reclaimed. That combination exhausts `/dev/shm` mid-run on a
+node whose shared memory is sized from the job's memory cgroup; it surfaces as
+a `RuntimeError: unable to open shared memory object` from the pin-memory
+thread, not as anything resembling a data problem.
+
+Three settings control it, all in `config.py`:
+
+| Setting | Default | |
+| --- | --- | --- |
+| `NUM_WORKERS` | `8` | training loader workers |
+| `VAL_NUM_WORKERS` | `NUM_WORKERS // 4` | the validation loader runs 6 batches an epoch against the training loader's 28; it does not need the same fleet |
+| `PREFETCH_FACTOR` | `1` | batches held ready per worker. The main `/dev/shm` knob |
+
+plus `persistent_workers=True` on both loaders, which stops the respawn churn.
+Together these bring steady-state shared memory to ~3.6 GiB. If a node still
+runs out, `PREFETCH_FACTOR` and `VAL_NUM_WORKERS` are the two to turn down
+first; check what the node actually offers with `df -h /dev/shm` on it.
+
+Note that persistent workers keep all `NUM_WORKERS + VAL_NUM_WORKERS`
+processes alive for the whole run rather than only during their own loader's
+epoch, so host RAM use becomes constant instead of intermittent — each worker
+carries a full torch/monai import.
+
 ## Adding the continuity term (clDice)
 
 Dice and cross-entropy are voxel-wise. A two-voxel break in a vessel costs
