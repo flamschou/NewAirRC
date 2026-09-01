@@ -12,9 +12,12 @@ Two halves, which can be used independently:
 
 | | | |
 | --- | --- | --- |
-| `pipeline/` | segmentation | train a model, run it on new volumes |
-| `analysis/` | evaluation | cut a tree back to its large vessels, score it, measure its branching ratios |
-| `figures/` | plots | turn the CSVs the above produce into figures |
+| [`pipeline/`](pipeline/README.md) | segmentation | train a model, run it on new volumes |
+| [`analysis/`](analysis/README.md) | evaluation | cut a tree back to its large vessels, score it, measure its branching ratios |
+
+Each has its own README for what this one leaves out — the continuity term and
+the dataloader's shared memory on one side, the cut and the scoring in detail on
+the other.
 
 Commands are run **from the repository root**, as modules. There is no installation
 step beyond the environment below — `python -m` finds the packages on its own.
@@ -171,6 +174,10 @@ python -m pipeline.inference \
 Prediction runs by sliding window over the full volume and is written back on the
 input's own grid and orientation.
 
+Beyond this: the clDice continuity term, the `/dev/shm` settings a cluster run
+needs, and how the dataset cache decides what to reuse are in
+[`pipeline/README.md`](pipeline/README.md).
+
 ## Evaluation
 
 Both tools below need a segmentation, whether it came from this pipeline or from
@@ -221,6 +228,11 @@ checks that decide whether the subjects are comparable at all:
 ```bash
 python -m analysis.cohort 'results/*_ratios.csv' --csv cohort.csv
 ```
+
+`analysis/` holds six more tools than the two above — sweeping the cut over a
+cohort, comparing two models without a ground truth, auditing the chain against
+synthetic trees. [`analysis/README.md`](analysis/README.md) says which does what,
+and why the defaults are what they are.
 
 ## Methodology
 

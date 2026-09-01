@@ -182,8 +182,17 @@ documented, and several flags carry a paragraph explaining why the default is wh
 
 ## Documentation
 
-`README.md` covers the pipeline, the cluster setup, the clDice term, cutting, and Dice scoring.
-`docs/centerline.md` is 800-odd lines on the centerline method alone: branch numbering, branching
-ratios, quality metrics, orphan components, and the phantom calibration the whole thing rests on.
+Five documents, each with an exclusive job — they link to each other rather than restating:
+
+| | |
+| --- | --- |
+| `README.md` | getting from zero to a first result. Deliberately lean |
+| `pipeline/README.md` | running trainings in anger: clDice, `/dev/shm`, fine-tuning, the cache |
+| `analysis/README.md` | the ten tools, which to use when, the cut and the scoring in detail |
+| `docs/centerline.md` | the centerline method, 800-odd lines: branch numbering, ratios, quality metrics, orphan components, phantom calibration |
+| `CLAUDE.md` | this file |
+
+When adding documentation, put it in the one whose job it is and link — do not restate. Three
+documents describing the same architecture is how they start to disagree.
 Prose in this repository argues for its choices rather than restating the code — match that
 register when editing it.
