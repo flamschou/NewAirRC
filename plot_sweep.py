@@ -226,6 +226,11 @@ def build_parser():
                         help="cut step to keep when the sweep varied it. Default: the "
                              "only one present, or the most frequent")
     parser.add_argument("--support", default=None, help="mask | centerline. Default as --step")
+    parser.add_argument("--peel", default=None, metavar="REF/PRED",
+                        help="terminal peel to keep when the sweep varied it (sweep_rescue.py "
+                             "--peels), written as it is printed: 1/0, 1/1, 0/0. Default as "
+                             "--step. The curves are a floor-against-Dice reading and averaging "
+                             "two peels into one would compare trees of different extents")
     parser.add_argument("--class-name", default=None, metavar="NAME",
                         help="keep one class when the sweep scored several")
     parser.add_argument("--highlight", type=float, default=None, metavar="MM",
@@ -258,6 +263,12 @@ def main():
 
     data = data[data.cut_step_mm == pick(data, "cut_step_mm", args.step)]
     data = data[data.support == pick(data, "support", args.support)]
+    # written by sweep_rescue.py since --peels put the peel in the grid; older
+    # CSVs have neither column and have exactly one peel by construction
+    if {"peel_terminals_reference", "peel_terminals_prediction"} <= set(data.columns):
+        data = data.assign(peel=data.peel_terminals_reference.astype(str) + "/"
+                           + data.peel_terminals_prediction.astype(str))
+        data = data[data.peel == pick(data, "peel", args.peel)]
     if args.class_name is not None:
         data = data[data["class"] == args.class_name]
 

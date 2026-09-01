@@ -2,8 +2,8 @@
 """
 sweep_rescue.py
 
-What --rescue-margin and --rescue-distance are worth on a cohort, read off
-the same trees.
+What --rescue-margin, --rescue-distance and the terminal peel are worth on a
+cohort, read off the same trees.
 
 `compute_dice.py` cuts each side twice and rescues the branches the floor
 only just removed (see `truncate.py: truncate_pair`). Two knobs decide how
@@ -21,15 +21,22 @@ distance and every margin reads it; and the reference is moved onto the
 prediction's grid as an owner map rather than as a mask, once, which makes
 each combination's Dice a couple of array operations instead of a resample.
 
-Every row is read on trees cut by the rule the sweep is NOT sweeping, and one
-part of it is worth knowing before reading any number: --peel-terminals
-defaults to `1 0` here, as in `compute_dice.py` -- the reference loses its
-last layer of tips and the prediction does not. Its tips are where a hand and
-a model disagree for reasons that are not the model's, and the asymmetry is
-because a model draws a vessel thinner than a hand does, so the floor has
-already stopped its tree earlier; see `compute_dice.PEEL_TERMINALS`. It is
-deliberately not in the grid -- every row is then a rescue read on the same
-tips -- and `--peel-terminals 1 1` or `0` are the other two settings.
+--peels puts the terminal peel in the grid too, which is a different kind of
+question and is read differently. The peel exists to leave the reference and
+the prediction at the SAME EXTENT -- `compute_dice.PEEL_TERMINALS` peels the
+reference alone, on the argument that a model draws its vessels thinner than
+a hand does and the floor has therefore already stopped its tree earlier --
+so the column to read is `length gap`, the signed difference of centerline
+each side kept, and the value to want is the one nearest 0. NOT the best
+Dice: peeling always raises it, because what is left is a smaller and easier
+region, so the loosest reading of the table picks the heaviest peel every
+time. `--peels 0 "1 0" "1 1"` is the comparison worth having.
+
+The peel is not independent of the margin, which is why it is in the same
+grid rather than in three separate runs: each side's plain cut is what the
+OTHER side's rescue is judged against, so peeling the reference alone leaves
+the prediction more to be rescued by, and the knee of the margin curve can
+move with it. Compare margins within one peel.
 
 Read the table for the knee, not the maximum. The Dice rises with both knobs
 by construction -- a wider band admits more agreement -- so the largest
@@ -45,6 +52,10 @@ Usage:
 
     python sweep_rescue.py --manifest manifest_ct.json --split val \
         --margins 0 0.5 1 1.5 2 3 --distances 1.0 1.5 2.0 --csv sweep.csv
+
+    # what the terminal peel is worth: read 'length gap', not 'dice_large'
+    python sweep_rescue.py --manifest manifest_ct.json --split val \
+        --peels 0 "1 0" "1 1" --margins 0 2 --csv sweep_peel.csv
 """
 import argparse
 import csv
@@ -60,8 +71,24 @@ from compute_dice import (PEEL_TERMINALS, PRED_SUFFIX, class_pairs, dice, parse_
                           prediction_path_for, relocate, rewrite_paths)
 from truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
                       centerline_support, class_mask, limit_terminal_length, peel_layers,
-                      peel_terminals, plan_cut, read_volume, retable, select_branches, subdivide,
-                      to_grid)
+                      peel_layers_of, peel_terminals, plan_cut, read_volume, retable,
+                      select_branches, subdivide, to_grid)
+
+
+def peel_pair(text):
+    """
+    One --peels value: "1 0", "1 1", "0" -- reference then prediction.
+
+    Both numbers go in ONE shell argument, since --peels takes a list of them
+    and two bare integers would be two values of the list rather than the two
+    sides of one.
+    """
+    try:
+        return peel_layers_of([int(piece) for piece in text.replace(",", " ").split()])
+    except (ValueError, SystemExit):
+        raise argparse.ArgumentTypeError(
+            f"'{text}' is not a peel: one value for both sides of the pair, or two -- reference "
+            f"then prediction -- in one argument, e.g. --peels 0 \"1 0\" \"1 1\"")
 
 
 def owner_volumes(plan):
@@ -152,45 +179,52 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
             retable(plan, subdivide(raw[index], plan["tree"]["world"], plan["tree"]["radii"],
                                     plan["tree"]["voxel_size"], step))
         for floor in args.floors:
-            # the plain rule, on both sides: the baseline, and what every
-            # rescue is judged against whatever the other knobs are
-            plain = [trim(plan["tree"]["table"],
-                          select_branches(plan["tree"]["table"], floor, args.max_generation,
-                                          args.ordering, args.min_strahler), side, args)
-                     for side, plan in enumerate(plans)]
-            support_masks = [None, None]
-            # the support is only ever read by a rescue: with no margin in the
-            # grid, nothing asks for it, and moving it between the two grids is
-            # the one resample per floor this loop would otherwise pay
-            if "mask" in args.supports and any(m > 0 for m in args.margins):
-                onto_prediction = cut_from(*scoring, kept_nodes(plans[0]["tree"], plain[0]))
-                onto_reference = cut_from(*owners[1], kept_nodes(plans[1]["tree"], plain[1]))
-                if regrid:
-                    onto_reference = to_grid(onto_reference, prediction_affine, plans[0]["shape"],
-                                             reference_affine)
-                support_masks = [onto_reference, onto_prediction]
-            rows.extend(sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor,
-                                    reference_ml, voxel_ml, args))
+            # The peel sits here, above the rescue and below the floor, because
+            # it is what the rescue is then read on: peeling changes each side's
+            # first cut, and the first cut is what the OTHER side's rescue is
+            # judged against, so the two knobs are not independent -- peel the
+            # reference alone and the prediction has more to be rescued by. It
+            # costs a plain cut and, with --supports mask, one support mask per
+            # value; the plans and the skeletons above it are untouched.
+            for peel in args.peels:
+                # the plain rule, on both sides: the baseline, and what every
+                # rescue is judged against whatever the other knobs are
+                plain = [trim(plan["tree"]["table"],
+                              select_branches(plan["tree"]["table"], floor, args.max_generation,
+                                              args.ordering, args.min_strahler), peel[side], args)
+                         for side, plan in enumerate(plans)]
+                support_masks = [None, None]
+                # the support is only ever read by a rescue: with no margin in
+                # the grid, nothing asks for it, and moving it between the two
+                # grids is the one resample this loop would otherwise pay
+                if "mask" in args.supports and any(m > 0 for m in args.margins):
+                    onto_prediction = cut_from(*scoring, kept_nodes(plans[0]["tree"], plain[0]))
+                    onto_reference = cut_from(*owners[1], kept_nodes(plans[1]["tree"], plain[1]))
+                    if regrid:
+                        onto_reference = to_grid(onto_reference, prediction_affine,
+                                                 plans[0]["shape"], reference_affine)
+                    support_masks = [onto_reference, onto_prediction]
+                rows.extend(sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor,
+                                        peel, reference_ml, voxel_ml, args))
     return rows, None
 
 
-def trim(table, keep, side, args):
+def trim(table, keep, layers, args):
     """
-    What `truncate.py` does to a selection after `select_branches`: the
+    What `truncate.py` does to a selection after `select_branches`: `layers`
     terminal layers peeled, then what is left of the terminal runs capped.
 
-    `side` is 0 for the reference and 1 for the prediction, because the peel
-    is not the same on the two (`compute_dice.PEEL_TERMINALS`). Neither knob
-    is swept -- they are part of the rule the sweep is run under, so every row
-    of the sweep is a rescue read on the same tips.
+    `layers` is THIS side's peel, not the pair's: the two sides are not peeled
+    alike (`compute_dice.PEEL_TERMINALS`), and the pair is swept, so it is the
+    caller that knows which of the two it is asking about.
     """
-    keep = peel_terminals(table, keep, peel_layers(args)[side])
+    keep = peel_terminals(table, keep, layers)
     return limit_terminal_length(table, keep, args.max_terminal_length)
 
 
-def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, reference_ml, voxel_ml,
-                args):
-    """Every (support, distance, margin) at one --cut-step and one floor."""
+def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, peel, reference_ml,
+                voxel_ml, args):
+    """Every (support, distance, margin) at one --cut-step, one floor and one peel."""
     rescuing = any(margin > 0 for margin in args.margins)
     rows = []
     for support in args.supports:
@@ -221,15 +255,14 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, refer
                     keep.append(trim(plan["tree"]["table"], select_branches(
                         plan["tree"]["table"], floor, args.max_generation,
                         args.ordering, args.min_strahler, margin=margin,
-                        supported=predicates[index]), index, args))
+                        supported=predicates[index]), peel[index], args))
                 reference_cut = cut_from(*scoring, kept_nodes(plans[0]["tree"], keep[0]))
                 prediction_cut = cut_from(*owners[1], kept_nodes(plans[1]["tree"], keep[1]))
                 reference_large_ml = float(reference_cut.sum() * voxel_ml)
                 rows.append({
                     "min_diameter_mm": floor, "cut_step_mm": step, "support": support,
                     "margin_mm": margin,
-                    "peel_terminals_reference": peel_layers(args)[0],
-                    "peel_terminals_prediction": peel_layers(args)[1],
+                    "peel_terminals_reference": peel[0], "peel_terminals_prediction": peel[1],
                     "kept_fraction_reference": (reference_large_ml / reference_ml
                                                 if reference_ml else float("nan")),
                     "distance_radii": "" if distance is None else distance,
@@ -249,40 +282,38 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, refer
 
 def summarize(rows, args):
     """The grid, averaged over the cases that produced every combination."""
-    print(f"\n{'floor':>7}{'step':>6}{'support':>11}{'margin':>8}{'dist':>6}{'dice_large':>13}"
-          f"{'kept vol':>10}{'centerline ref/pred':>22}{'volume gap mL':>15}")
+    print(f"\n{'floor':>7}{'peel':>7}{'step':>6}{'support':>11}{'margin':>8}{'dist':>6}"
+          f"{'dice_large':>13}{'kept vol':>10}{'centerline ref/pred':>22}{'length gap mm':>15}"
+          f"{'volume gap mL':>15}")
     for floor in args.floors:
-        for step in args.steps:
-            for support in args.supports:
-                for distance in ([""] if support == "mask" else list(args.distances)):
-                    for margin in args.margins:
-                        subset = [r for r in rows
-                                  if r["min_diameter_mm"] == floor and r["cut_step_mm"] == step
-                                  and r["support"] == support and r["margin_mm"] == margin
-                                  and r["distance_radii"] == distance]
-                        if not subset:
-                            continue
-                        mean = lambda key: float(np.mean([r[key] for r in subset]))
-                        gap = float(np.mean([abs(r["reference_large_ml"] - r["prediction_large_ml"])
-                                             for r in subset]))
-                        centerline = (f"{mean('reference_kept_mm'):.0f}"
-                                      f" / {mean('prediction_kept_mm'):.0f}")
-                        print(f"{floor:>7.1f}{step:>6.1f}{support:>11}{margin:>8.2f}"
-                              f"{str(distance):>6}{mean('dice_large'):>13.4f}"
-                              f"{mean('kept_fraction_reference'):>9.1%}"
-                              f"{centerline:>22}{gap:>15.2f}")
-    reference_peel, prediction_peel = peel_layers(args)
-    if reference_peel or prediction_peel:
-        print(f"\nEvery row is read on trees whose tips are gone: --peel-terminals "
-              f"{reference_peel} {prediction_peel}, the\ndefault here as in compute_dice.py"
-              + (" -- the reference peeled and the prediction not,\nbecause a model draws a "
-                 "vessel thinner than the hand that annotated it and the floor\nhas already "
-                 "stopped its tree earlier." if reference_peel != prediction_peel else ".")
-              + "\nIt is not swept: it is part of the rule the sweep is run under, so the rescue "
-                "is read\non the same tips throughout, and 'centerline ref/pred' says whether it "
-                "left the two\ntrees the same length. Report --peel-terminals with whatever the "
-                "table settles.")
-    print("\nThe three knobs do not behave alike, so do not read the table the same way down\n"
+        for peel in args.peels:
+            for step in args.steps:
+                for support in args.supports:
+                    for distance in ([""] if support == "mask" else list(args.distances)):
+                        for margin in args.margins:
+                            subset = [r for r in rows
+                                      if r["min_diameter_mm"] == floor and r["cut_step_mm"] == step
+                                      and r["peel_terminals_reference"] == peel[0]
+                                      and r["peel_terminals_prediction"] == peel[1]
+                                      and r["support"] == support and r["margin_mm"] == margin
+                                      and r["distance_radii"] == distance]
+                            if not subset:
+                                continue
+                            mean = lambda key: float(np.mean([r[key] for r in subset]))
+                            gap = float(np.mean([abs(r["reference_large_ml"]
+                                                     - r["prediction_large_ml"]) for r in subset]))
+                            # signed, unlike the volume gap: which side is the
+                            # longer one is the whole question the peel asks
+                            length = float(np.mean([r["reference_kept_mm"] - r["prediction_kept_mm"]
+                                                    for r in subset]))
+                            centerline = (f"{mean('reference_kept_mm'):.0f}"
+                                          f" / {mean('prediction_kept_mm'):.0f}")
+                            print(f"{floor:>7.1f}{f'{peel[0]}/{peel[1]}':>7}{step:>6.1f}"
+                                  f"{support:>11}{margin:>8.2f}"
+                                  f"{str(distance):>6}{mean('dice_large'):>13.4f}"
+                                  f"{mean('kept_fraction_reference'):>9.1%}"
+                                  f"{centerline:>22}{length:>+15.0f}{gap:>15.2f}")
+    print("\nThe knobs do not behave alike, so do not read the table the same way down\n"
           "each column.\n"
           "\n"
           "  floor  changes WHICH REGION is scored, so its Dice moves in no guaranteed\n"
@@ -296,7 +327,15 @@ def summarize(rows, args):
           "         problem -- a long branch one side cuts whole and the other keeps in part.\n"
           "         It should close as the step shrinks, and then stop closing.\n"
           "  margin an on/off more than a distance: the rescue reaches at most where the other\n"
-          "         side's plain cut stopped, so 0 against non-0 is the only real comparison.")
+          "         side's plain cut stopped, so 0 against non-0 is the only real comparison.\n"
+          "  peel   read it on 'length gap' -- reference minus prediction, in mm of centerline\n"
+          "         -- and NOT on the Dice. The peel exists to leave the two trees the same\n"
+          "         extent, which is a gap near 0; the Dice rises whenever a side loses its\n"
+          "         tips, because what is left is a smaller and easier region, so taking the\n"
+          "         best Dice here picks the heaviest peel every time. It is also not\n"
+          "         independent of the margin: a side's plain cut is what the OTHER side's\n"
+          "         rescue is judged against, so peeling the reference alone leaves the\n"
+          "         prediction more to be rescued by. Compare margins within one peel.")
 
 
 def build_parser():
@@ -318,6 +357,15 @@ def build_parser():
     parser.add_argument("--distances", type=float, nargs="+", default=[1.0, 1.5, 2.0],
                         metavar="RADII")
     parser.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION")
+    parser.add_argument("--peels", type=peel_pair, nargs="+", default=None, metavar='"REF PRED"',
+                        help="--peel-terminals values to put in the grid: how many terminal layers "
+                             "each side loses. Each value is one or two numbers in ONE shell "
+                             "argument -- --peels 0 \"1 0\" \"1 1\" is no peel, the reference "
+                             "peeled alone (the default, see compute_dice.PEEL_TERMINALS) and both "
+                             "sides peeled alike. Read it on 'length gap' rather than on the Dice: "
+                             "the peel is there to leave the two trees the SAME EXTENT, and a Dice "
+                             "that rises because a side lost its tips has only been read on a "
+                             "smaller region. Default: the single value of --peel-terminals")
     parser.add_argument("--floors", type=float, nargs="+", default=None, metavar="MM",
                         help="--min-diameter values to put in the grid: what \"large vessel\" is "
                              "taken to mean. Default: the single value of --min-diameter")
@@ -345,6 +393,7 @@ def main():
     args.angle_offset = DIRECTION_OFFSET
     args.quiet = True
     args.floors = args.floors or [args.min_diameter]
+    args.peels = args.peels or [peel_layers(args)]
 
     with open(args.manifest) as handle:
         entries = [e for e in json.load(handle) if e.get("split") == args.split]
@@ -357,8 +406,8 @@ def main():
         entries = entries[: args.limit]
     classes = class_pairs(args.classes, args.swap_av)
     print(f"{len(entries)} case(s), {len(args.margins)} margin(s) x {len(args.distances)} "
-          f"distance(s), floor {args.min_diameter} mm"
-          + f", --peel-terminals {' '.join(str(n) for n in peel_layers(args))}")
+          f"distance(s), floor {args.min_diameter} mm, peel(s) "
+          + ", ".join(f"{a}/{b}" for a, b in args.peels))
 
     rows = []
     for entry in entries:
@@ -377,7 +426,9 @@ def main():
                 row.update(case=case, model=args.label, **{"class": name})
             rows.append(produced)
             best = max(produced, key=lambda r: r["dice_large"])
-            plain = min(produced, key=lambda r: (r["margin_mm"], r["cut_step_mm"]))
+            plain = min(produced, key=lambda r: (r["margin_mm"], r["cut_step_mm"],
+                                                r["peel_terminals_reference"],
+                                                r["peel_terminals_prediction"]))
             print(f"  dice_large {plain['dice_large']:.4f} brut, {best['dice_large']:.4f} au mieux "
                   f"(step {best['cut_step_mm']}, {best['support']}, margin {best['margin_mm']})")
 

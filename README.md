@@ -548,6 +548,25 @@ two trees of the same extent. The peel drops real vessel whichever way it is
 set, so both values are printed with the summary and written into every CSV
 row.
 
+`sweep_rescue.py --peels` settles it on the cohort rather than on the story,
+by putting the peel in the same grid as the rescue knobs:
+
+```bash
+python sweep_rescue.py --manifest manifest_ct.json --split val     --peels 0 "1 0" "1 1" --margins 0 2 --csv sweep_peel.csv
+```
+
+Each value is one or two numbers in **one** shell argument. Read the result
+on the `length gap` column -- reference minus prediction, signed, in mm of
+centerline -- and take the peel nearest 0, **not** the best `dice_large`:
+peeling always raises the Dice, since what is left is a smaller and easier
+region, so reading the table that way picks the heaviest peel every time.
+
+The peel shares the grid rather than being three separate runs because it is
+not independent of the margin: each side's plain cut is what the *other*
+side's rescue is judged against, so peeling the reference alone leaves the
+prediction more to be rescued by, and the knee of the margin curve can move
+with it. Compare margins within one peel.
+
 Two volumes are written per pass, to say **where** the two masks differ:
 
 - `<case>_<class>_errors_{full,large}.nii.gz` -- a label map, 1 = agreement,
