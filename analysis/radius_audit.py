@@ -214,7 +214,7 @@ def run_chain(segments, spacing, args, workdir, tag):
     return points, np.asarray(table["radius_mm"], float), int(mask.sum())
 
 
-def print_table(title, groups, columns=("n", "truth", "measured", "error_mm", "error_rel")):
+def print_table(title, groups):
     """One stratum per line, with the interval on the mean relative error."""
     print(f"\n{title}")
     print("  stratum          seg   cross-plane vox   true r    measured r    error      "

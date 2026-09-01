@@ -30,7 +30,11 @@ def load_manifest(manifest_path):
     with open(manifest_path, "r") as f:
         entries = json.load(f)
 
-    valid_splits = {"train", "val"}
+    # "test" is accepted but never returned by split_manifest: the analysis
+    # tools (truncate, compute_dice, sweep_rescue) read the same manifests
+    # with their own --split, so a manifest may legitimately carry test
+    # entries that training simply ignores.
+    valid_splits = {"train", "val", "test"}
     for entry in entries:
         missing = {"image", "label", "split"} - entry.keys()
         if missing:
@@ -50,7 +54,8 @@ def split_manifest(entries):
         entries (list[dict]): Entries as returned by load_manifest.
     Returns:
         tuple[list[dict], list[dict]]: (train_entries, val_entries), with the
-            "split" key stripped out (only "image"/"label" kept).
+            "split" key stripped out (only "image"/"label" kept). Entries
+            marked "test" are dropped -- they belong to the analysis tools.
     """
     train_entries = [
         {"image": e["image"], "label": e["label"]}

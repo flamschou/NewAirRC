@@ -70,7 +70,7 @@ from .centerline import DIRECTION_OFFSET
 from .compute_dice import (PEEL_TERMINALS, PRED_SUFFIX, class_pairs, dice, parse_rewrite,
                           prediction_path_for, relocate, rewrite_paths)
 from .truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
-                      centerline_support, class_mask, limit_terminal_length, peel_layers,
+                      centerline_support, class_mask, peel_layers,
                       peel_layers_of, peel_terminals, plan_cut, read_volume, retable,
                       select_branches, subdivide, to_grid)
 
@@ -218,8 +218,7 @@ def trim(table, keep, layers, args):
     alike (`compute_dice.PEEL_TERMINALS`), and the pair is swept, so it is the
     caller that knows which of the two it is asking about.
     """
-    keep = peel_terminals(table, keep, layers)
-    return limit_terminal_length(table, keep, args.max_terminal_length)
+    return peel_terminals(table, keep, layers)
 
 
 def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, peel, reference_ml,

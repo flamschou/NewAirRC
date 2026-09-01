@@ -173,6 +173,12 @@ class Net(pytorch_lightning.LightningModule):
 
 def main():
     torch.set_float32_matmul_precision("medium")
+    # Seeds python/numpy/torch, and with workers=True the dataloader workers
+    # too -- which is what actually matters here, since the patch sampling
+    # and every augmentation run inside them. Without this the validation
+    # crops differ from run to run, so val_dice_metric cannot be compared
+    # across runs and a fine-tuning cannot be told apart from its baseline.
+    pytorch_lightning.seed_everything(cfg.SEED, workers=True)
 
     entries = manifest_module.load_manifest(cfg.MANIFEST_PATH)
     train_entries, val_entries = manifest_module.split_manifest(entries)

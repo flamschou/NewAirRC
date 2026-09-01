@@ -3,7 +3,7 @@
 model.py
 
 DynUNet (nnU-Net-style 3D U-Net) construction, kept separate from the
-training loop so it can be reused by future scripts (e.g. inference).
+training loop so train.py and inference.py build the same network.
 """
 import torch
 from monai.networks.nets import DynUNet

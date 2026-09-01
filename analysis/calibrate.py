@@ -336,13 +336,6 @@ def keep_consistent(rows):
             row["dropped_for"] = f"{row['n_orders']} orders against {modal} for the arm"
 
 
-def relative(value, truth):
-    """Relative bias, or None when either side is missing."""
-    if value is None or value == "" or not truth or truth <= 0:
-        return None
-    return float(value) / truth - 1.0
-
-
 def trend(points):
     """
     Least squares of the bias on the imposed value, with a t interval.
@@ -741,9 +734,9 @@ def report(results, labels, args):
             print(f"  at {grid} mm: {len(kept)}/{len(here)} case(s) kept, all on "
                   f"{sorted(counts) if counts else 'no'} order(s)")
             if len(counts) > 1:
-                print(f"  WARNING: the kept cases still do not rest on the same number of orders. "
-                      f"Part of what the bias column shows is that changing count rather than the "
-                      f"ratio, and the curve is not comparable point to point")
+                print("  WARNING: the kept cases still do not rest on the same number of orders. "
+                      "Part of what the bias column shows is that changing count rather than the "
+                      "ratio, and the curve is not comparable point to point")
             if kept:
                 print(f"    {verdict(kept)}")
 

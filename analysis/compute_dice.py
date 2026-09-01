@@ -520,7 +520,18 @@ def reusable(destination, classes, args, source, counterpart=None, peel=None):
             stored["rescue"].get(key) == value
             for key, value in wanted["rescue"].items() if key != "against"):
         return False, "cut against an older version of the other side"
-    return False, "cut by another rule (" + ", ".join(differing) + ")"
+    if differing:
+        return False, "cut by another rule (" + ", ".join(differing) + ")"
+    # The dicts are unequal yet no key's value differs: one side carries keys
+    # the other does not, and `.get` reads both as None. That is a change to
+    # the SCHEMA -- a setting added to or dropped from cut_settings -- not to
+    # this cut, and saying "cut by another rule ()" would send someone looking
+    # for a rule that did not move. Name the keys instead.
+    added = sorted(set(wanted) - set(stored))
+    dropped = sorted(set(stored) - set(wanted))
+    return False, ("cut before the settings schema changed ("
+                   + ", ".join(["+" + key for key in added] + ["-" + key for key in dropped])
+                   + ")")
 
 
 def truncated_pair(reference_path, reference_classes, prediction_path, prediction_classes,
@@ -653,7 +664,7 @@ def print_summary(rows, args):
                   f"is\n{lengths[0]:+.0f} mm on average ({lengths[1]:.0f} SD). Near 0 is two trees "
                   f"of the same extent, which is\nwhat the peel is for; far from it, "
                   + " or ".join(others) + "\nis the same cohort read the other ways.")
-        print(f"It drops real vessel either way: report --peel-terminals with the number.")
+        print("It drops real vessel either way: report --peel-terminals with the number.")
     if rescuing:
         print(f"The rescued segments are branches under the floor kept because the other side\n"
               f"kept them, so they mostly add agreement: --rescue-margin 0 for the large-vessel\n"

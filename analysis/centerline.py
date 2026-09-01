@@ -1385,7 +1385,7 @@ def print_flare(elements, limit):
     chains = [e for e in elements if e["n_segments"] >= 2 and np.isfinite(flare(e))]
     ranked = sorted(((flare(e), e) for e in chains), key=lambda pair: -pair[0])
     over = [pair for pair in ranked if pair[0] > limit]
-    print(f"\n=== element flare (distal / proximal calibre) ===")
+    print("\n=== element flare (distal / proximal calibre) ===")
     if not over:
         worst = ranked[0][0] if ranked else float("nan")
         print(f"  none of the {len(chains)} multi-segment elements exceeds {limit:.2f} "
@@ -1403,10 +1403,10 @@ def print_flare(elements, limit):
     if len(over) > 12:
         print(f"  ... and {len(over) - 12} more")
     hit = sorted({e["order"] for _, e in over})
-    print(f"  a flared element is a heterogeneous aggregation, not a vessel that widens: the "
-          f"chain kept one order across a junction and was grouped into one row. Its calibre_mm "
-          f"is a median over a radius that moves by the flare factor, and it is the whole of its "
-          f"order's mean wherever that order carries one or two elements")
+    print("  a flared element is a heterogeneous aggregation, not a vessel that widens: the "
+          "chain kept one order across a junction and was grouped into one row. Its calibre_mm "
+          "is a median over a radius that moves by the flare factor, and it is the whole of its "
+          "order's mean wherever that order carries one or two elements")
     print(f"  all {len(over)} are excluded from the order statistics and from the fit, one row at "
           f"a time; order(s) {', '.join(str(o) for o in hit)} keep their remaining elements. The "
           f"tree keeps them too -- only the averages lose them, as with --max-synthetic")
@@ -1607,7 +1607,7 @@ def bridging_curve(parts, positions, mask, spacing, dilations):
     return rows
 
 
-def print_bridging(rows, voxel_size):
+def print_bridging(rows):
     """Prints the bridging curve and reads its shape out loud."""
     if not rows:
         return
@@ -1847,7 +1847,7 @@ def orphan_split(orphans, min_length=0.0):
     }
 
 
-def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8):
+def print_orphans(orphans, compare_name=None, dust_length=10.0, show=8):
     """
     Prints the three populations of orphan components, then the worst of them.
 
@@ -1889,9 +1889,9 @@ def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8
                       f"{row['severed_reject']}")
             if len(demoted) > show:
                 print(f"    ... {len(demoted) - show} more, see severed_reject in --orphans-csv")
-            print(f"  a demotion moves the correction from post-processing to retraining, so the "
-                  f"three thresholds behind it are --severed-max-detour, --severed-max-calibre "
-                  f"and --severed-max-elbow")
+            print("  a demotion moves the correction from post-processing to retraining, so the "
+                  "three thresholds behind it are --severed-max-detour, --severed-max-calibre "
+                  "and --severed-max-elbow")
     print(f"  the split at {dust_length:.0f} mm is --dust-length; above it, the components are "
           f"the ones worth repairing")
 
@@ -1922,7 +1922,7 @@ def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8
 
 
 
-def quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
+def quality_metrics(table, bifurcations, breakpoints, parts, volume_fraction,
                     n_volume_components, voxel_size, min_radius, max_order,
                     n_cycles=0, n_cycles_broken=0, orphans=(), volume_ml=None,
                     n_elements=None, ordering=""):
@@ -2673,7 +2673,7 @@ def print_reclaim(rows, orphans, spacing, show=8):
     stability of the fit against a small perturbation, not the effect of
     reconnection. Which is worth knowing, but is a different claim.
     """
-    print(f"\n=== reconnection of severed pedicles ===")
+    print("\n=== reconnection of severed pedicles ===")
     total = sum(row["reclaimed_ml"] for row in rows)
     length = sum(row["length_mm"] for row in rows)
     missing = sum(row["length_mm"] for row in orphans)
@@ -2690,10 +2690,10 @@ def print_reclaim(rows, orphans, spacing, show=8):
         if len(rows) > show:
             print(f"  ... {len(rows) - show} more")
     if missing > 0 and length / missing < 0.10:
-        print(f"  WARNING: under a tenth of the missing centerline was reattached. Read the "
-              f"before/after ratios below as a sensitivity test -- how far the fit moves under a "
-              f"perturbation this small -- and NOT as the impact of reconnection. If they move by "
-              f"more than the perturbation, that is a result about the fit, not about the repair")
+        print("  WARNING: under a tenth of the missing centerline was reattached. Read the "
+              "before/after ratios below as a sensitivity test -- how far the fit moves under a "
+              "perturbation this small -- and NOT as the impact of reconnection. If they move by "
+              "more than the perturbation, that is a result about the fit, not about the repair")
 
 
 def synthetic_share(table):
@@ -2715,16 +2715,16 @@ def synthetic_share(table):
 
 def print_synthetic(share):
     """Prints the synthetic share, and says what it licenses."""
-    print(f"\n=== synthetic centerline ===")
+    print("\n=== synthetic centerline ===")
     print(f"  {share['synthetic_mm']:.1f} mm of {share['total_mm']:.1f} mm "
           f"({share['fraction']:.2%}) runs through voxels the repair put back, "
           f"across {share['n_branches']} branch(es)")
     print("  every branch carries synthetic_fraction in --branches-csv and --elements-csv, and "
           "--max-synthetic drops them from the statistics while leaving the tree connected")
     if share["fraction"] > 0.10:
-        print(f"  WARNING: over a tenth of the centerline is reconstructed. Re-run with "
-              f"--max-synthetic 0.5 and check the ratios hold: above this share they may be "
-              f"describing the repair rather than the tree")
+        print("  WARNING: over a tenth of the centerline is reconstructed. Re-run with "
+              "--max-synthetic 0.5 and check the ratios hold: above this share they may be "
+              "describing the repair rather than the tree")
 
 
 def compare_measurable(before, after):
@@ -2822,7 +2822,7 @@ def summarize(result, ordering, order_range, min_diameter, prespecified=False,
     return elements, summaries, ratios
 
 
-def sweep_angle_offset(graph, table, smooth, radii, voxel_size, order_key, min_radius, offsets):
+def sweep_angle_offset(table, smooth, radii, voxel_size, order_key, min_radius, offsets):
     """
     Re-measures the junction angles with the direction fitted from a range of
     distances off the node, in multiples of the local junction radius.
@@ -3124,7 +3124,7 @@ def main():
                              "that still counts as a mislabelled crossing. Existence of a path "
                              "proves nothing -- the other tree is connected -- so this is what "
                              "separates severed from hole. Use --severed-sweep to see what each "
-                             "value buys and costs before moving it. Default: 2")
+                             "value buys and costs before moving it. Default: 3")
     parser.add_argument("--severed-sweep", type=float, nargs="+", default=None, metavar="RATIO",
                         help="Tabulate recovered length, reclaimed volume and mL per mm against "
                              "the detour threshold, e.g. --severed-sweep 1 1.5 2 2.5 3 4")
@@ -3295,7 +3295,7 @@ def main():
         print_ratios(ratios[counting], args.ordering, counting)
 
     if args.angle_sweep:
-        print_angle_sweep(sweep_angle_offset(graph, table, smooth, radii, voxel_size, "order",
+        print_angle_sweep(sweep_angle_offset(table, smooth, radii, voxel_size, "order",
                                              args.murray_min_voxels * voxel_size, args.angle_sweep))
 
     sweep = None
@@ -3315,13 +3315,13 @@ def main():
         union_paths(work_mask, other, orphans, positions, radii, work_spacing)
     orphans = classify_orphans(orphans, args.dust_length, args.severed_max_detour,
                                args.severed_max_calibre, args.severed_max_elbow)
-    metrics = quality_metrics(graph, table, bifurcations, breakpoints, parts, volume_fraction,
+    metrics = quality_metrics(table, bifurcations, breakpoints, parts, volume_fraction,
                               n_volume_components, voxel_size, breakpoint_radius, args.breakpoint_order,
                               result["cycles"], len(result["broken"]), orphans,
                               float(mask.sum() * np.prod(spacing) / 1000.0), len(elements),
                               args.ordering)
     print_quality(metrics, breakpoints)
-    print_orphans(orphans, args.orphan_gap, compare_name, args.dust_length)
+    print_orphans(orphans, compare_name, args.dust_length)
 
     if args.severed_sweep:
         if compare_union is None:
@@ -3390,7 +3390,7 @@ def main():
         if dilations[0] > 0:
             dilations.insert(0, 0.0)
         bridge = bridging_curve(parts, positions, work_mask, work_spacing, dilations)
-        print_bridging(bridge, voxel_size)
+        print_bridging(bridge)
 
     output = args.output or default_output_path(args.input)
     volume = paint_centerline(table, positions, mask.shape, factors, args.paint)
