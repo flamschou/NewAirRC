@@ -21,6 +21,16 @@ distance and every margin reads it; and the reference is moved onto the
 prediction's grid as an owner map rather than as a mask, once, which makes
 each combination's Dice a couple of array operations instead of a resample.
 
+Every row is read on trees cut by the rule the sweep is NOT sweeping, and one
+part of it is worth knowing before reading any number: --peel-terminals
+defaults to `1 0` here, as in `compute_dice.py` -- the reference loses its
+last layer of tips and the prediction does not. Its tips are where a hand and
+a model disagree for reasons that are not the model's, and the asymmetry is
+because a model draws a vessel thinner than a hand does, so the floor has
+already stopped its tree earlier; see `compute_dice.PEEL_TERMINALS`. It is
+deliberately not in the grid -- every row is then a rescue read on the same
+tips -- and `--peel-terminals 1 1` or `0` are the other two settings.
+
 Read the table for the knee, not the maximum. The Dice rises with both knobs
 by construction -- a wider band admits more agreement -- so the largest
 number is always the loosest setting, and it is not the answer. What to look
@@ -46,11 +56,12 @@ import numpy as np
 
 import config as cfg
 from centerline import DIRECTION_OFFSET
-from compute_dice import (PRED_SUFFIX, class_pairs, dice, parse_rewrite, prediction_path_for,
-                          relocate, rewrite_paths)
+from compute_dice import (PEEL_TERMINALS, PRED_SUFFIX, class_pairs, dice, parse_rewrite,
+                          prediction_path_for, relocate, rewrite_paths)
 from truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
-                      centerline_support, class_mask, limit_terminal_length, peel_terminals,
-                      plan_cut, read_volume, retable, select_branches, subdivide, to_grid)
+                      centerline_support, class_mask, limit_terminal_length, peel_layers,
+                      peel_terminals, plan_cut, read_volume, retable, select_branches, subdivide,
+                      to_grid)
 
 
 def owner_volumes(plan):
@@ -145,8 +156,8 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
             # rescue is judged against whatever the other knobs are
             plain = [trim(plan["tree"]["table"],
                           select_branches(plan["tree"]["table"], floor, args.max_generation,
-                                          args.ordering, args.min_strahler), args)
-                     for plan in plans]
+                                          args.ordering, args.min_strahler), side, args)
+                     for side, plan in enumerate(plans)]
             support_masks = [None, None]
             # the support is only ever read by a rescue: with no margin in the
             # grid, nothing asks for it, and moving it between the two grids is
@@ -163,12 +174,17 @@ def sweep_case(reference_path, reference_values, prediction_path, prediction_val
     return rows, None
 
 
-def trim(table, keep, args):
-    """What `truncate.py` does to a selection after `select_branches`: the
+def trim(table, keep, side, args):
+    """
+    What `truncate.py` does to a selection after `select_branches`: the
     terminal layers peeled, then what is left of the terminal runs capped.
-    Neither is swept -- they are part of the rule the sweep is run under, so
-    every row of the sweep is a rescue read on the same tips."""
-    keep = peel_terminals(table, keep, args.peel_terminals)
+
+    `side` is 0 for the reference and 1 for the prediction, because the peel
+    is not the same on the two (`compute_dice.PEEL_TERMINALS`). Neither knob
+    is swept -- they are part of the rule the sweep is run under, so every row
+    of the sweep is a rescue read on the same tips.
+    """
+    keep = peel_terminals(table, keep, peel_layers(args)[side])
     return limit_terminal_length(table, keep, args.max_terminal_length)
 
 
@@ -205,13 +221,15 @@ def sweep_knobs(plans, plain, support_masks, owners, scoring, step, floor, refer
                     keep.append(trim(plan["tree"]["table"], select_branches(
                         plan["tree"]["table"], floor, args.max_generation,
                         args.ordering, args.min_strahler, margin=margin,
-                        supported=predicates[index]), args))
+                        supported=predicates[index]), index, args))
                 reference_cut = cut_from(*scoring, kept_nodes(plans[0]["tree"], keep[0]))
                 prediction_cut = cut_from(*owners[1], kept_nodes(plans[1]["tree"], keep[1]))
                 reference_large_ml = float(reference_cut.sum() * voxel_ml)
                 rows.append({
                     "min_diameter_mm": floor, "cut_step_mm": step, "support": support,
                     "margin_mm": margin,
+                    "peel_terminals_reference": peel_layers(args)[0],
+                    "peel_terminals_prediction": peel_layers(args)[1],
                     "kept_fraction_reference": (reference_large_ml / reference_ml
                                                 if reference_ml else float("nan")),
                     "distance_radii": "" if distance is None else distance,
@@ -253,6 +271,17 @@ def summarize(rows, args):
                               f"{str(distance):>6}{mean('dice_large'):>13.4f}"
                               f"{mean('kept_fraction_reference'):>9.1%}"
                               f"{centerline:>22}{gap:>15.2f}")
+    reference_peel, prediction_peel = peel_layers(args)
+    if reference_peel or prediction_peel:
+        print(f"\nEvery row is read on trees whose tips are gone: --peel-terminals "
+              f"{reference_peel} {prediction_peel}, the\ndefault here as in compute_dice.py"
+              + (" -- the reference peeled and the prediction not,\nbecause a model draws a "
+                 "vessel thinner than the hand that annotated it and the floor\nhas already "
+                 "stopped its tree earlier." if reference_peel != prediction_peel else ".")
+              + "\nIt is not swept: it is part of the rule the sweep is run under, so the rescue "
+                "is read\non the same tips throughout, and 'centerline ref/pred' says whether it "
+                "left the two\ntrees the same length. Report --peel-terminals with whatever the "
+                "table settles.")
     print("\nThe three knobs do not behave alike, so do not read the table the same way down\n"
           "each column.\n"
           "\n"
@@ -304,13 +333,14 @@ def build_parser():
                              "checkpoints swept into two CSVs then concatenate into the one "
                              "table the floor is actually chosen on")
     parser.add_argument("--csv", help="One row per case, class and combination")
-    add_cut_arguments(parser)
+    add_cut_arguments(parser, peel_terminals=PEEL_TERMINALS)
     add_skeleton_arguments(parser)
     return parser
 
 
 def main():
     args = build_parser().parse_args()
+    args.peel_terminals = list(peel_layers(args))
     args.max_shift = None
     args.angle_offset = DIRECTION_OFFSET
     args.quiet = True
@@ -327,7 +357,8 @@ def main():
         entries = entries[: args.limit]
     classes = class_pairs(args.classes, args.swap_av)
     print(f"{len(entries)} case(s), {len(args.margins)} margin(s) x {len(args.distances)} "
-          f"distance(s), floor {args.min_diameter} mm")
+          f"distance(s), floor {args.min_diameter} mm"
+          + f", --peel-terminals {' '.join(str(n) for n in peel_layers(args))}")
 
     rows = []
     for entry in entries:

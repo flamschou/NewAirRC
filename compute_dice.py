@@ -7,8 +7,9 @@ split, twice: on the whole tree, and on the large vessels alone.
 
 The large-vessel pass truncates BOTH sides with the same rule (see
 `truncate.py`: a branch is kept only if it clears --min-diameter and its
-parent was kept) and writes the truncated masks out, so the number can be
-traced back to the volumes it was read on. Cutting only the reference would
+parent was kept, and the last layer of tips of what is left goes too) and
+writes the truncated masks out, so the number can be traced back to the
+volumes it was read on. Cutting only the reference would
 count every peripheral vessel of the prediction as a false positive, and
 the Dice would then measure the truncation rather than the model.
 
@@ -39,6 +40,31 @@ was trained on -- that loses branches to the floor. The rescue adds where the
 two already agree, so it mostly raises dice_large: `n_segments_rescued_*` and
 `rescued_ml_*` say how much of the number rests on it, and --rescue-margin 0
 is the number without it.
+
+The cut then loses its tips, and NOT SYMMETRICALLY: --peel-terminals defaults
+to `1 0` here -- one terminal layer off the reference, none off the prediction
+-- where `truncate.py` peels neither side. What is being scored is a model
+against a HAND-DRAWN annotation, and the last layer of tips is where the two
+disagree for reasons that are not the model's: an annotator stops a vessel
+where the contrast goes rather than where the vessel does, the calibre that
+ended a terminal run was measured where partial volume weighs most, and
+whether the run ended there at all depends on the skeleton having found the
+junction above it.
+
+The asymmetry is the point. The model draws a vessel thinner than the hand
+that annotated it, so the same floor already stops the prediction's tree
+earlier than the reference's, and peeling both sides would take that one
+asymmetry out twice -- leaving the prediction shorter than the reference it is
+being compared with, which is a truncation difference scored as a model error.
+Peeling the reference alone is what brings the two to the same extent.
+
+That is a heuristic about these two objects and not a property of the metric,
+so it is checked rather than believed: the summary prints the centerline each
+side kept (`centerline_kept_mm_reference` against `centerline_kept_mm_prediction`
+in the CSV), and near 0 for the difference is two trees of the same extent.
+`--peel-terminals 1 1` peels both sides, `--peel-terminals 0` neither. The
+peel drops real vessel whichever way it is set, so both values are printed
+with the summary and written into every row.
 
 Two volumes are written per pass, to say WHERE the two masks differ:
 
@@ -83,6 +109,12 @@ Usage:
 
     # the cut alone, each side judged strictly on its own tree
     python compute_dice.py --manifest manifest_ct.json --rescue-margin 0
+
+    # the tips kept, for a reference that is not a hand-drawn annotation
+    python compute_dice.py --manifest manifest_ct.json --peel-terminals 0
+
+    # both sides peeled alike, to check the asymmetric default against
+    python compute_dice.py --manifest manifest_ct.json --peel-terminals 1 1
 """
 import argparse
 import collections
@@ -97,13 +129,38 @@ from scipy.ndimage import uniform_filter
 
 import config as cfg
 from truncate import (SUFFIX, add_cut_arguments, add_skeleton_arguments, class_mask,
-                      cut_settings, output_path, read_volume, settings_path, to_grid,
+                      cut_settings, output_path, peel_layers, read_volume, settings_path, to_grid,
                       truncate_pair)
 from centerline import DIRECTION_OFFSET
 
 # What inference.py appends to the image stem. Kept as a literal rather than
 # imported, so this file does not drag torch and monai in behind it.
 PRED_SUFFIX = "_vascular_pred"
+
+# (reference, prediction): one terminal layer off the hand-drawn annotation,
+# none off the model's mask.
+#
+# The tips are where a hand and a model disagree for reasons that are not the
+# model's -- an annotator stops a vessel where the contrast goes, the calibre
+# that ended a terminal run was measured where partial volume weighs most, and
+# whether the run ended there at all depends on the skeleton having found the
+# junction above it -- so the last layer of the reference's cut is the least
+# comparable thing in it.
+#
+# The peel is asymmetric because the two sides are not: the model draws a
+# vessel THINNER than the hand that annotated it, so the same floor already
+# stops the prediction's tree earlier, and a symmetric peel would take the
+# same asymmetry out twice -- once through the calibre, once through the tips
+# -- leaving the prediction shorter than the reference it is compared with.
+# Peeling the reference alone is what brings the two to the same extent.
+#
+# It is a heuristic about these two objects, not a property of the metric, and
+# it is worth checking rather than believing: `--peel-terminals 1 1` peels both
+# sides, `--peel-terminals 0` neither, and `centerline_kept_mm_reference`
+# against `centerline_kept_mm_prediction` in the CSV -- printed with the
+# summary -- says which setting actually leaves the two trees the same length. `truncate.py` peels nothing by default, since cutting
+# a mask to look at it is not scoring it against a hand.
+PEEL_TERMINALS = (1, 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -425,7 +482,7 @@ def class_pairs(names, swap_av=False):
     return pairs
 
 
-def reusable(destination, classes, args, source, counterpart=None):
+def reusable(destination, classes, args, source, counterpart=None, peel=None):
     """
     Whether the cut already on disk was made by the rule being asked for.
 
@@ -441,13 +498,18 @@ def reusable(destination, classes, args, source, counterpart=None):
     `counterpart` is the other side of the pair the cut was made against,
     which the sidecar fingerprints too: a rescued cut belongs to the file it
     was rescued against as much as to the file it was cut from.
+
+    `peel` is this side's --peel-terminals, which the two sides of a pair do
+    not share (PEEL_TERMINALS): a cut of the reference made when the peel was
+    symmetric is not the cut being asked for now, and the sidecar is what says
+    so instead of it being reused under the same name.
     """
     sidecar = settings_path(destination)
     if not (os.path.exists(destination) and os.path.exists(sidecar)):
         return False, "not cut yet"
     with open(sidecar) as handle:
         stored = json.load(handle)
-    wanted = cut_settings(classes, args, source, counterpart)
+    wanted = cut_settings(classes, args, source, counterpart, peel)
     if stored == wanted:
         return True, ""
     differing = sorted(key for key in set(stored) | set(wanted)
@@ -479,8 +541,11 @@ def truncated_pair(reference_path, reference_classes, prediction_path, predictio
     """
     destinations = (output_path(reference_path, args.suffix, args.output_dir),
                     output_path(prediction_path, args.suffix, args.output_dir))
-    states = (reusable(destinations[0], reference_classes, args, reference_path, prediction_path),
-              reusable(destinations[1], prediction_classes, args, prediction_path, reference_path))
+    peel = peel_layers(args)
+    states = (reusable(destinations[0], reference_classes, args, reference_path, prediction_path,
+                       peel[0]),
+              reusable(destinations[1], prediction_classes, args, prediction_path, reference_path,
+                       peel[1]))
     if all(reuse for reuse, _ in states) and not args.overwrite:
         kept = []
         for destination, classes in zip(destinations, (reference_classes, prediction_classes)):
@@ -521,6 +586,17 @@ def describe(values):
     return float(array.mean()), float(array.std(ddof=1)) if len(array) > 1 else 0.0, len(array)
 
 
+def peeling(args):
+    """--peel-terminals as a phrase, or "" when nothing is peeled."""
+    reference, prediction = peel_layers(args)
+    if not (reference or prediction):
+        return ""
+    if reference == prediction:
+        return f"{reference} terminal layer(s) peeled off both sides"
+    return f"{reference} terminal layer(s) peeled off the reference and {prediction} off the " \
+           f"prediction"
+
+
 def print_summary(rows, args):
     """The two Dices over the split, per class."""
     classes = []
@@ -532,6 +608,7 @@ def print_summary(rows, args):
     rescuing = args.rescue_margin > 0
     print(f"\n{cases} case(s) scored on {len(classes)} class(es), "
           f"large vessels cut at {args.min_diameter} mm"
+          + (f", {peeling(args)}" if peeling(args) else "")
           + (f", branches down to {args.min_diameter - args.rescue_margin} mm kept when the other "
              f"side held them" if rescuing else ""))
     print(f"{'class':<10}{'n':>4}{'dice (whole)':>18}{'dice (large)':>18}{'kept volume':>14}"
@@ -553,6 +630,30 @@ def print_summary(rows, args):
     print("\nThe two columns are read on different regions -- the large-vessel one is the\n"
           "easier region by construction -- so they compare models, not each other.\n"
           "Report --min-diameter with the second one.")
+    reference_peel, prediction_peel = peel_layers(args)
+    if reference_peel or prediction_peel:
+        lengths = describe([row["centerline_kept_mm_reference"]
+                            - row["centerline_kept_mm_prediction"] for row in rows
+                            if row.get("centerline_kept_mm_reference") is not None
+                            and row.get("centerline_kept_mm_prediction") is not None])
+        print(f"\nThe cuts lost their tips: --peel-terminals {reference_peel} {prediction_peel}. "
+              f"A tip is where the calibre\nwas measured worst and where a hand and a model agree "
+              f"least -- an annotator stops a\nvessel where the contrast goes, not where the "
+              f"vessel does.")
+        if reference_peel != prediction_peel:
+            print("The two sides are peeled differently because they are not the same kind of\n"
+                  "object: a model draws a vessel thinner than a hand does, so the floor has\n"
+                  "already stopped its tree earlier, and peeling it again would take one\n"
+                  "asymmetry out twice.")
+        if lengths:
+            others = [f"--peel-terminals {a} {b}" for a, b in
+                      ((reference_peel, 0), (reference_peel, reference_peel), (0, 0))
+                      if (a, b) != (reference_peel, prediction_peel)]
+            print(f"Whether it worked is the centerline left standing: reference minus prediction "
+                  f"is\n{lengths[0]:+.0f} mm on average ({lengths[1]:.0f} SD). Near 0 is two trees "
+                  f"of the same extent, which is\nwhat the peel is for; far from it, "
+                  + " or ".join(others) + "\nis the same cohort read the other ways.")
+        print(f"It drops real vessel either way: report --peel-terminals with the number.")
     if rescuing:
         print(f"The rescued segments are branches under the floor kept because the other side\n"
               f"kept them, so they mostly add agreement: --rescue-margin 0 for the large-vessel\n"
@@ -602,7 +703,7 @@ def build_parser():
                            "for a checkpoint trained with the inverted convention (see "
                            "compare_predictions.py --swap-av-a)")
 
-    add_cut_arguments(parser)
+    add_cut_arguments(parser, peel_terminals=PEEL_TERMINALS)
 
     rescue = parser.add_argument_group("the threshold effect on the cut")
     rescue.add_argument("--rescue-margin", type=float, default=2.0, metavar="MM",
@@ -658,6 +759,8 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    # one value or two, normalized once so nothing downstream has to ask
+    args.peel_terminals = list(peel_layers(args))
     # build_tree reads these off args; they are not worth a flag here
     args.max_shift = None
     args.angle_offset = DIRECTION_OFFSET
@@ -673,7 +776,8 @@ def main():
     print(f"{len(entries)} case(s) in split '{args.split}', "
           + ", ".join(f"{name}: raw {raw} against predicted {predicted}"
                       for name, raw, predicted in classes)
-          + f", large vessels cut at {args.min_diameter} mm")
+          + f", large vessels cut at {args.min_diameter} mm"
+          + (f", {peeling(args)}" if peeling(args) else ""))
 
     predictor = Predictor(args.checkpoint, args.cpu) if args.checkpoint else None
     skipped = collections.Counter()
@@ -745,6 +849,8 @@ def main():
             row = {"case": case, "class": name, "reference": entry["label"],
                    "prediction": prediction_file, "predicted_value": predicted[0],
                    "min_diameter_mm": args.min_diameter,
+                   "peel_terminals_reference": peel_layers(args)[0],
+                   "peel_terminals_prediction": peel_layers(args)[1],
                    "rescue_margin_mm": args.rescue_margin}
             prediction_whole = class_mask(prediction_data, predicted)
             pairs = (("full", class_mask(reference_data, raw), prediction_whole),
@@ -798,6 +904,11 @@ def main():
                 if row["prediction_ml_full"] else float("nan"),
                 "n_segments_kept_reference": reference_row.get("n_segments_kept"),
                 "n_segments_kept_prediction": prediction_row.get("n_segments_kept"),
+                # the length of what each side kept, in world mm, so it is
+                # comparable across the two grids: this is what says whether
+                # --peel-terminals brought the two trees to the same extent
+                "centerline_kept_mm_reference": reference_row.get("centerline_kept_mm"),
+                "centerline_kept_mm_prediction": prediction_row.get("centerline_kept_mm"),
                 "n_segments_rescued_reference": reference_row.get("n_segments_rescued"),
                 "n_segments_rescued_prediction": prediction_row.get("n_segments_rescued"),
                 # of those, the ones the tolerance band admitted; the rest

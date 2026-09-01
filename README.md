@@ -509,8 +509,10 @@ Going through `compute_dice.py --checkpoint` rather than
 the prediction suffix, so it will happily run the model on your label
 volumes. The manifest says which files are images.
 
-The large-vessel pass truncates **both sides** with the same rule and writes
-the truncated masks out (`truncate.py` does the cutting, sidecar included),
+The large-vessel pass truncates **both sides** with the same calibre floor,
+then peels the last layer of tips off the **reference alone**
+(`--peel-terminals 1 0`), and writes the truncated masks out (`truncate.py`
+does the cutting, sidecar included),
 so the number can be traced back to the volumes it was read on. Cutting only
 the reference would count every peripheral vessel of the prediction as a
 false positive, and the Dice would measure the truncation rather than the
@@ -520,6 +522,31 @@ the failure showing up, not a defect of the metric, but it is why each row
 keeps `n_segments_kept_reference` next to `n_segments_kept_prediction`: a
 case where those two disagree wildly is a case to look at before quoting its
 Dice.
+
+The terminal peel is the default in `compute_dice.py` and `sweep_rescue.py`
+only, and `truncate.py` still peels nothing. The reference scored here is a
+**hand-drawn annotation**, and its last layer of tips is where a hand and a
+model disagree for reasons that are not the model's -- an annotator stops a
+vessel where the contrast goes rather than where the vessel does, and the
+calibre that ended a terminal run was measured where partial volume weighs
+most.
+
+The peel is **asymmetric** because the two sides are not the same kind of
+object: the model draws a vessel *thinner* than the hand that annotated it,
+so the same floor already stops the prediction's tree earlier, and peeling
+both sides would take that one asymmetry out twice -- leaving the prediction
+shorter than the reference it is compared with, a truncation difference
+scored as a model error. `--peel-terminals` therefore takes one value for
+both sides or two, reference then prediction: `1 0` is the default, `1 1`
+peels symmetrically, `0` peels nothing.
+
+That is a heuristic about these two objects, not a property of the metric,
+and the tools print what it is worth: `centerline_kept_mm_reference` against
+`centerline_kept_mm_prediction` (`centerline ref/pred` in `sweep_rescue.py`'s
+table) is the length each side kept, in world millimetres, and near-equal is
+two trees of the same extent. The peel drops real vessel whichever way it is
+set, so both values are printed with the summary and written into every CSV
+row.
 
 Two volumes are written per pass, to say **where** the two masks differ:
 

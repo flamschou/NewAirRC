@@ -36,9 +36,16 @@ volume weighs most, and whether it ended there at all depends on the
 skeleton having found the junction above it. `--peel-terminals` drops those
 runs whole, one layer at a time, leaving a tree whose every tip is a
 bifurcation both sides saw; `--max-terminal-length` only shortens them.
-Both are off by default: they drop vessel the two sides may well have
-agreed on, and like the floor they have to be reported and applied to both
-sides.
+Both are off by default HERE: this file cuts a mask so it can be looked at,
+and the tips are vessel. The scoring tools that share these arguments
+(`compute_dice.py`, `sweep_rescue.py`) peel the REFERENCE by one layer
+instead, and only the reference, because they read a model against a
+hand-drawn annotation: the tips are where the two disagree for reasons that
+are not the model's, and the model's own tree has already been shortened by
+the floor, its vessels being drawn thinner. --peel-terminals therefore takes
+one value for both sides of a pair or two, reference then prediction. Either
+way it drops vessel the two sides may well have agreed on, and like the floor
+it has to be reported.
 
 How the cut is turned back into voxels. Every voxel is assigned to the
 nearest centerline node -- a Voronoi partition of the mask by its own
@@ -435,6 +442,29 @@ def terminal_runs(table, keep):
     return runs
 
 
+def peel_layers_of(peel):
+    """
+    --peel-terminals as (reference side, prediction side).
+
+    One value peels both sides of a pair alike, two peel them separately.
+    The asymmetric form exists because the two sides of a scoring pair are
+    not the same kind of object -- see `compute_dice.PEEL_TERMINALS` -- and
+    a cut made on ONE mask, which has no other side, reads the first value.
+    """
+    layers = (peel,) if isinstance(peel, int) else tuple(peel)
+    if len(layers) == 1:
+        layers = layers * 2
+    if len(layers) != 2 or any(n < 0 for n in layers):
+        raise SystemExit("--peel-terminals takes one value for both sides of a pair, or two "
+                         "(reference then prediction), none of them negative")
+    return layers
+
+
+def peel_layers(args):
+    """`peel_layers_of` read off a parsed command line."""
+    return peel_layers_of(args.peel_terminals)
+
+
 def peel_terminals(table, keep, layers, verbose=False):
     """
     Removes the terminal branches of a selection, `layers` times over.
@@ -768,7 +798,7 @@ def truncate_class(mask, affine, spacing, args, verbose=True):
     keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                            args.ordering, args.min_strahler)
     warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
-    keep = peel_terminals(plan["tree"]["table"], keep, args.peel_terminals, verbose=verbose)
+    keep = peel_terminals(plan["tree"]["table"], keep, peel_layers(args)[0], verbose=verbose)
     keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length,
                                  verbose=verbose)
     return cut_plan(plan, keep, row, verbose=verbose), row
@@ -783,7 +813,7 @@ def fingerprint(path):
     return {"path": os.path.basename(path), "bytes": stat.st_size, "mtime": round(stat.st_mtime, 3)}
 
 
-def cut_settings(classes, args, source=None, counterpart=None):
+def cut_settings(classes, args, source=None, counterpart=None, peel=None):
     """
     The rule a cut was made by, written beside the mask it produced.
 
@@ -831,8 +861,9 @@ def cut_settings(classes, args, source=None, counterpart=None):
     # written only when it is on: an absent key and a null one describe the
     # same cut, and always writing it would invalidate every sidecar already
     # on disk -- a cohort's worth of skeletonizations -- for a knob nobody set
-    if args.peel_terminals:
-        settings["peel_terminals"] = args.peel_terminals
+    peel = peel_layers(args)[0] if peel is None else peel
+    if peel:
+        settings["peel_terminals"] = peel
     if args.max_terminal_length:
         settings["max_terminal_length"] = args.max_terminal_length
     if source is not None and os.path.exists(source):
@@ -905,14 +936,15 @@ def truncate_file(path, classes, args, destination=None):
     return rows, kept_by_class
 
 
-def write_cut(path, output, affine, classes, destination, args, counterpart=None):
+def write_cut(path, output, affine, classes, destination, args, counterpart=None, peel=None):
     """The truncated volume and the sidecar saying by which rule it was cut."""
     directory = os.path.dirname(destination)
     if directory:
         os.makedirs(directory, exist_ok=True)
     nib.save(nib.Nifti1Image(output, affine), destination)
     with open(settings_path(destination), "w") as handle:
-        json.dump(cut_settings(classes, args, path, counterpart), handle, indent=1, sort_keys=True)
+        json.dump(cut_settings(classes, args, path, counterpart, peel), handle, indent=1,
+                  sort_keys=True)
     print(f"  wrote {destination}")
 
 
@@ -978,6 +1010,8 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
     if [name for name, _ in reference_classes] != [name for name, _ in prediction_classes]:
         raise ValueError("the two sides of a pair must name the same classes, in the same order")
 
+    # indexed like `sides`: the reference's peel, then the prediction's
+    peel = peel_layers(args)
     sides = []
     for role, path, classes, destination in (
             ("reference", reference_path, reference_classes, destinations[0]),
@@ -1017,7 +1051,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
 
         # first pass, the plain rule, on both sides: what the rescue is judged against
         plain, first = [], []
-        for plan in plans:
+        for index, plan in enumerate(plans):
             if plan is None:
                 plain.append(set())
                 first.append(None)
@@ -1025,7 +1059,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
             keep = select_branches(plan["tree"]["table"], args.min_diameter, args.max_generation,
                                    args.ordering, args.min_strahler)
             warn_if_empty(plan["tree"]["table"], keep, args.min_diameter)
-            keep = peel_terminals(plan["tree"]["table"], keep, args.peel_terminals)
+            keep = peel_terminals(plan["tree"]["table"], keep, peel[index])
             keep = limit_terminal_length(plan["tree"]["table"], keep, args.max_terminal_length)
             plain.append(keep)
             first.append(keep_voxels(plan, keep))
@@ -1059,7 +1093,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
                 # both are applied to the rescued selection and not to what
                 # the rescue added: a rescued branch can turn a run that was
                 # terminal into an ordinary one, and the run is the object
-                keep = peel_terminals(branches, keep, args.peel_terminals)
+                keep = peel_terminals(branches, keep, peel[index])
                 keep = limit_terminal_length(branches, keep, args.max_terminal_length)
                 rescued = keep - plain[index]
 
@@ -1090,7 +1124,7 @@ def truncate_pair(reference_path, reference_classes, prediction_path, prediction
     rows = []
     for index, side in enumerate(sides):
         write_cut(side["path"], side["output"], side["affine"], side["classes"],
-                  side["destination"], args, sides[1 - index]["path"])
+                  side["destination"], args, sides[1 - index]["path"], peel=peel[index])
         for row in side["rows"]:
             row["output"] = side["destination"]
         rows.extend(side["rows"])
@@ -1138,8 +1172,24 @@ def write_csv(path, rows):
 # --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
-def add_cut_arguments(parser):
-    """Where the tree is cut. Shared with compute_dice.py, so the two agree by construction."""
+def add_cut_arguments(parser, peel_terminals=0):
+    """
+    Where the tree is cut. Shared with compute_dice.py, so the two agree by
+    construction.
+
+    `peel_terminals` is the only default a caller sets, because the right
+    value depends on what is being cut and not on the rule. It is one number
+    for both sides of a pair, or two -- reference then prediction.
+
+    Cutting one segmentation to look at it (this file) peels nothing: the tips
+    are vessel, and dropping them throws away what was asked for. SCORING one
+    against a hand-drawn reference (compute_dice.py, sweep_rescue.py) peels the
+    REFERENCE alone, `1 0`: its tips are where the two disagree for reasons
+    that are not the model's -- an annotator stops a vessel where the contrast
+    goes, and one voxel of that decision moves a whole terminal run -- while
+    the prediction's tree has already been shortened by the floor, a model
+    drawing its vessels thinner. See `compute_dice.PEEL_TERMINALS`.
+    """
     cut = parser.add_argument_group("where to cut")
     cut.add_argument("--min-diameter", type=float, default=MIN_DIAMETER_MM, metavar="MM",
                      help="A branch thinner than this is cut off, with everything under it. This "
@@ -1167,18 +1217,26 @@ def add_cut_arguments(parser):
                           "from the tips instead of down from the root. Off by default: it is "
                           "read off the leaves, and in vivo the leaves are wherever the "
                           "segmentation ran out of contrast, not where the tree ends")
-    cut.add_argument("--peel-terminals", type=int, default=0, metavar="N",
+    cut.add_argument("--peel-terminals", type=int, nargs="+", default=list(peel_layers_of(
+                         peel_terminals)), metavar="N",
                      help="Also drop the terminal branches of the KEPT tree, N layers of them. A "
                           "layer is every run past the last bifurcation OF THE CUT -- the order-1 "
                           "class counted from the tips, so everything that leaves is of the same "
                           "order however deep it sits, and a tip is removed for being a tip and "
                           "not for its generation, which one junction the skeleton missed would "
-                          "change. What is left is a tree whose every tip is a bifurcation both "
-                          "sides saw, which is the point: a tip is where the calibre was measured "
-                          "worst and where two segmentations of one tree agree least. Not "
+                          "change. Peeled on both sides, what is left is a tree whose every tip "
+                          "is a bifurcation both saw; peeled on one, it is that side brought back "
+                          "to the extent of the other. Either way a tip is where the calibre was "
+                          "measured worst and where two segmentations of one tree agree least. "
+                          "Not "
                           "--min-strahler, which reads the order off the full tree, before the "
-                          "truncation. Drops real vessel: report it, and pass the same value on "
-                          "both sides. Default: 0")
+                          "truncation. Drops real vessel: report it. One value peels both sides "
+                          "of a pair alike; two, REFERENCE then PREDICTION, peel them differently "
+                          "-- which is the point when the two sides are not the same kind of "
+                          "object (see compute_dice.py: a model draws a vessel thinner than a "
+                          "hand does, so the floor has already shortened its tree and peeling it "
+                          "again cuts twice for one asymmetry). "
+                          f"Default here: {' '.join(str(n) for n in peel_layers_of(peel_terminals))}")
     cut.add_argument("--max-terminal-length", type=float, default=None, metavar="MM",
                      help="Also cut every terminal run of the KEPT tree -- the chain of pieces "
                           "past its last bifurcation -- back to this length. Where a run ends is "
@@ -1267,6 +1325,7 @@ def build_parser():
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    args.peel_terminals = list(peel_layers(args))
     given = [name for name in ("input", "input_dir", "manifest") if getattr(args, name)]
     if len(given) != 1:
         parser.error("pass exactly one of --input, --input-dir and --manifest")
@@ -1300,7 +1359,7 @@ def main():
           + ", ".join(f"{name} ({'any nonzero' if values is None else values})"
                       for name, values in classes)
           + f", cut at {args.min_diameter} mm"
-          + (f", {args.peel_terminals} terminal layer(s) peeled" if args.peel_terminals else "")
+          + (f", {peel_layers(args)[0]} terminal layer(s) peeled" if peel_layers(args)[0] else "")
           + (f", terminal runs capped at {args.max_terminal_length} mm"
              if args.max_terminal_length else ""))
 
