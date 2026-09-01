@@ -8,8 +8,8 @@ largest component -- a quick way to check how fragmented a
 segmentation is.
 
 Usage:
-    python -m analysis.connectivity --path <mask.nii.gz> --label 2
-    python -m analysis.connectivity --path <mask.nii.gz>          # any nonzero voxel
+    python -m analysis.connectivity --input <mask.nii.gz> --label 2
+    python -m analysis.connectivity --input <mask.nii.gz>          # any nonzero voxel
 """
 import argparse
 
@@ -20,11 +20,11 @@ from scipy.ndimage import label as connected_components
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--path", required=True, help="Path to the mask (nifti)")
+    parser.add_argument("--input", required=True, help="Mask to analyse (nifti)")
     parser.add_argument("--label", type=int, default=None, help="Raw label value to isolate before analysis. Default: any nonzero voxel")
     args = parser.parse_args()
 
-    img = nib.load(args.path)
+    img = nib.load(args.input)
     data = np.asarray(img.dataobj)
 
     mask = (data == args.label) if args.label is not None else (data > 0)
@@ -41,7 +41,7 @@ def main():
     largest_size = int(sizes.max())
     largest_fraction = largest_size / total_voxels
 
-    print(f"mask: {args.path}")
+    print(f"mask: {args.input}")
     print(f"label: {'nonzero' if args.label is None else args.label}")
     print(f"total voxels in mask: {total_voxels}")
     print(f"number of connected components: {n_components}")

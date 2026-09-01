@@ -646,7 +646,7 @@ its daughters weld into, and the fit on it measures the weld.
 
 ```bash
 python -m analysis.calibrate --spacing 1.25,0.799,1.25 --side-branches 0 1 2 3 \
-  --repeats 5 --jitter 0.1 --measured-rb 2.31 --out calibration.csv
+  --repeats 5 --jitter 0.1 --measured-rb 2.31 --csv calibration.csv
 ```
 
 **Nothing is kept out of the curve for being imprecise.** Both criteria that
@@ -740,7 +740,7 @@ spacing, the anisotropy, the floor applied and the orders it left, and
 ```bash
 python -m analysis.centerline --input sub-01.nii.gz --subject sub-01 \
   --ordering strahler_dd --prespecified --ratios-csv results/sub-01_ratios.csv
-python -m analysis.cohort 'results/*_ratios.csv' --out cohort.csv
+python -m analysis.cohort 'results/*_ratios.csv' --csv cohort.csv
 ```
 
 `cohort.py` assembles those files and runs the two checks that decide whether

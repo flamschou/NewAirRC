@@ -145,7 +145,7 @@ def swap_artery_vein(data, class_names):
     return swapped
 
 
-def compare_pair(case_id, path_a, path_b, class_names, swap_av_a, swap_av_b, skip_surface, skip_topology, nsd_tolerance_mm):
+def compare_pair(case_id, path_a, path_b, class_names, swap_av_a, swap_av_b, no_surface, no_topology, nsd_tolerance_mm):
     data_a, spacing_a = load_label_volume(path_a)
     data_b, spacing_b = load_label_volume(path_b)
 
@@ -185,11 +185,11 @@ def compare_pair(case_id, path_a, path_b, class_names, swap_av_a, swap_av_b, ski
             100.0 * abs(row["volume_a_mm3"] - row["volume_b_mm3"]) / max_vol if max_vol > 0 else 0.0
         )
 
-        if not skip_topology:
+        if not no_topology:
             row["n_components_a"] = num_components(mask_a)
             row["n_components_b"] = num_components(mask_b)
 
-        if not skip_surface:
+        if not no_surface:
             row["hd95_mm"], row["asd_mm"], row["nsd"] = surface_metrics(
                 mask_a, mask_b, spacing_a, nsd_tolerance_mm
             )
@@ -200,24 +200,26 @@ def compare_pair(case_id, path_a, path_b, class_names, swap_av_a, swap_av_b, ski
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--root-dir", required=True, help="Directory tree containing both prediction sets (searched recursively for **/*.nii.gz)")
+    parser.add_argument("--input-dir", required=True, help="Directory tree containing both prediction sets (searched recursively for **/*.nii.gz)")
     parser.add_argument("--suffix-a", default="_vascular_pred_ct", help="Filename suffix (before .nii.gz) identifying model A's predictions")
     parser.add_argument("--suffix-b", default="_vascular_pred2", help="Filename suffix (before .nii.gz) identifying model B's predictions")
     parser.add_argument("--swap-av-a", action="store_true", help="Swap artery/vein class indices in model A's predictions before comparing (use if model A is known to invert them)")
     parser.add_argument("--swap-av-b", action="store_true", help="Swap artery/vein class indices in model B's predictions before comparing")
     parser.add_argument("--class-names", nargs="+", default=None, help="Override class list (index 0 = background). Defaults to config.CLASS_NAMES")
-    parser.add_argument("--output", default="prediction_comparison.csv", help="Output CSV path (long format: one row per case x class)")
+    parser.add_argument("--csv", default="prediction_comparison.csv", help="Output CSV path (long format: one row per case x class)")
     parser.add_argument("--nsd-tolerance-mm", type=float, default=2.0, help="Tolerance (mm) for Normalized Surface Dice (default: 2.0)")
-    parser.add_argument("--skip-surface", action="store_true", help="Skip HD95/ASD/NSD (slow on large volumes)")
-    parser.add_argument("--skip-topology", action="store_true", help="Skip connected-component counts")
+    parser.add_argument("--no-surface", action="store_true",
+                        help="Do not compute HD95/ASD/NSD (slow on large volumes)")
+    parser.add_argument("--no-topology", action="store_true",
+                        help="Do not count connected components")
     args = parser.parse_args()
 
     class_names = args.class_names or cfg.CLASS_NAMES
 
-    pairs = find_pairs(args.root_dir, args.suffix_a, args.suffix_b)
+    pairs = find_pairs(args.input_dir, args.suffix_a, args.suffix_b)
     if not pairs:
         parser.error(
-            f"No matching pairs found under {args.root_dir} for suffixes "
+            f"No matching pairs found under {args.input_dir} for suffixes "
             f"'{args.suffix_a}' / '{args.suffix_b}'"
         )
     logging.info(f"Found {len(pairs)} matched pairs")
@@ -229,13 +231,13 @@ def main():
             compare_pair(
                 case_id, path_a, path_b, class_names,
                 args.swap_av_a, args.swap_av_b,
-                args.skip_surface, args.skip_topology, args.nsd_tolerance_mm,
+                args.no_surface, args.no_topology, args.nsd_tolerance_mm,
             )
         )
 
     df = pd.DataFrame(all_rows)
-    df.to_csv(args.output, index=False)
-    logging.info(f"Wrote {len(df)} rows ({len(pairs)} cases x {df['class'].nunique()} classes) to {args.output}")
+    df.to_csv(args.csv, index=False)
+    logging.info(f"Wrote {len(df)} rows ({len(pairs)} cases x {df['class'].nunique()} classes) to {args.csv}")
 
     summary_cols = [c for c in ["dice", "nsd", "volume_diff_pct", "hd95_mm", "asd_mm"] if c in df.columns]
     summary = df.groupby("class")[summary_cols].agg(["mean", "std"])

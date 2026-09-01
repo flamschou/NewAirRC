@@ -52,9 +52,9 @@ not a neutral simplification.
 
 Usage:
     python -m analysis.calibrate --rd 1.30 1.45 1.56 1.70 1.85 --spacing 0.80 1.05 1.31 \
-        --measured-rd 1.517 1.430 --out calibration.csv
+        --measured-rd 1.517 1.430 --csv calibration.csv
     python -m analysis.calibrate --spacing 1.25,0.799,1.25 --side-branches 0 1 2 3 \
-        --repeats 5 --jitter 0.1 --measured-rb 2.31 --out calibration.csv
+        --repeats 5 --jitter 0.1 --measured-rb 2.31 --csv calibration.csv
 """
 import argparse
 import csv
@@ -69,17 +69,6 @@ from scipy.stats import t as student_t
 from . import phantom
 
 RATIOS = ("R_b", "R_d", "R_l")
-
-
-def parse_spacing(text):
-    """
-    One --spacing entry to a 3-vector: "0.8" or "1.25,0.799,1.25".
-
-    The comma form is the point of the option. A study acquires anisotropic
-    voxels; bracketing them with two isotropic runs answers a question about
-    two grids that do not exist rather than the one that does.
-    """
-    return phantom.as_triple([float(v) for v in str(text).replace("x", ",").split(",")])
 
 
 def label(spacing):
@@ -551,13 +540,13 @@ def main():
                              "Default: element")
     parser.add_argument("--seed", type=int, default=0, help="First random seed. Default: 0")
     parser.add_argument("--from-csv", metavar="PATH",
-                        help="Read a sweep written by --out and go straight to the tables and the "
+                        help="Read a sweep written by --csv and go straight to the tables and the "
                              "backward reading, running no phantom. This is how a revised measured "
                              "ratio is put through the curve: re-sweeping to read a new value "
                              "would move the curve as well, leaving nothing to attribute the "
                              "difference to. Only --measured-*, --max-fit-spread and --min-r2 still\n"
                              "apply, and re-gating with them is exactly what it is for")
-    parser.add_argument("--out", help="CSV to write, one row per (imposed value, spacing, ratio)")
+    parser.add_argument("--csv", help="CSV to write, one row per (imposed value, spacing, ratio)")
     parser.add_argument("--keep", help="Directory to keep the phantoms and per-case CSVs in")
     args = parser.parse_args()
 
@@ -588,7 +577,7 @@ def main():
               "case is run -- wider than the effect. Use --repeats 5 or more, with --jitter")
     if args.pin_smallest and args.pin_length is None:
         args.pin_length = 4.0 * args.pin_smallest
-    spacings = [parse_spacing(text) for text in args.spacing]
+    spacings = [phantom.parse_spacing(text) for text in args.spacing]
     workdir = args.keep or tempfile.mkdtemp(prefix="calibrate_")
     os.makedirs(workdir, exist_ok=True)
     print(f"working in {workdir}")
@@ -681,9 +670,9 @@ def main():
                   f"{arm}={got if got is None else round(got, 3)}")
 
     # written before the reading, so a sweep whose reading fails is not lost
-    if args.out:
-        write_results(args.out, results)
-        print(f"\nwrote {args.out}")
+    if args.csv:
+        write_results(args.csv, results)
+        print(f"\nwrote {args.csv}")
     report(results, [label(spacing) for spacing in spacings], args)
 
 

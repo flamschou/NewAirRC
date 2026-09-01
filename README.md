@@ -373,18 +373,18 @@ class to a CSV:
 
 ```bash
 python -m analysis.compare_predictions \
-  --root-dir /data/flamant/data/ct/lidc_idri \
+  --input-dir /data/flamant/data/ct/lidc_idri \
   --suffix-a _vascular_pred_ct \
   --suffix-b _vascular_pred2 \
   --swap-av-a \
-  --output prediction_comparison.csv
+  --csv prediction_comparison.csv
 ```
 
 `--swap-av-a` corrects for the known artery/vein inversion in the CT
 model's predictions (`_vascular_pred_ct`) before computing per-class
 metrics -- without it, artery/vein Dice will look near-zero even
 though the two models agree on vessel location (`--swap-av-b` is the
-equivalent flag for model B). `--skip-surface` / `--skip-topology`
+equivalent flag for model B). `--no-surface` / `--no-topology`
 drop the slower metrics (NSD/HD95/ASD and component counts,
 respectively) if you just want a quick Dice + volume pass first.
 
@@ -442,7 +442,7 @@ python -m analysis.truncate --input vascular_case001.nii.gz --label 3
 
 # every foreground class of config.LABEL_CLASS_MAP, each on its own tree,
 # into one file (raw 3 = artery, 4 = vein, airway classes 1-2 dropped)
-python -m analysis.truncate --input vascular_case001.nii.gz --classes
+python -m analysis.truncate --input vascular_case001.nii.gz --all-classes
 
 # the labels of a manifest split
 python -m analysis.truncate --manifest manifests/manifest_ct.json --split val --output-dir cut/

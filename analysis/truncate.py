@@ -69,7 +69,7 @@ Usage:
     python -m analysis.truncate --input vascular_case001.nii.gz --label 3
 
     # every class of config.LABEL_CLASS_MAP, one file per case
-    python -m analysis.truncate --input vascular_case001.nii.gz --classes
+    python -m analysis.truncate --input vascular_case001.nii.gz --all-classes
 
     # the validation split of a manifest, references truncated in place
     python -m analysis.truncate --manifest manifests/manifest_ct.json --split val
@@ -1093,7 +1093,7 @@ def resolve_classes(args):
     """
     if args.label:
         return [("label_" + "_".join(str(v) for v in args.label), list(args.label))]
-    if not args.classes:
+    if not args.all_classes:
         return [("foreground", None)]
 
     from pipeline import config as cfg  # only this branch needs the class map
@@ -1240,7 +1240,7 @@ def build_parser():
     source.add_argument("--label", type=int, nargs="+", default=None,
                         help="Raw label value(s) making up the class to cut. Default: every "
                              "nonzero voxel, as one tree")
-    source.add_argument("--classes", action="store_true",
+    source.add_argument("--all-classes", action="store_true",
                         help="Cut every foreground class of config.LABEL_CLASS_MAP separately, "
                              "each on its own tree, into one output file. Use it on a multi-class "
                              "reference (raw 3 = artery, 4 = vein)")
@@ -1272,7 +1272,7 @@ def main():
     given = [name for name in ("input", "input_dir", "manifest") if getattr(args, name)]
     if len(given) != 1:
         parser.error("pass exactly one of --input, --input-dir and --manifest")
-    if args.label and args.classes:
+    if args.label and args.all_classes:
         parser.error("--label names the values to cut, --classes reads them from config.py; "
                      "pass one or the other")
     if args.output and (args.input_dir or args.manifest):
@@ -1282,7 +1282,7 @@ def main():
     args.angle_offset = DIRECTION_OFFSET
 
     if args.manifest:
-        args.classes = True
+        args.all_classes = True
         with open(args.manifest) as handle:
             entries = [e for e in json.load(handle) if e.get("split") == args.split]
         if not entries:

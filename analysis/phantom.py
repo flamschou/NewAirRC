@@ -64,6 +64,22 @@ def unit(vector):
     return vector / norm if norm > 0 else vector
 
 
+def parse_spacing(text):
+    """
+    One --spacing entry to a 3-vector: "0.8" or "1.25,0.799,1.25".
+
+    The comma form is the point of the option. A study acquires anisotropic
+    voxels; bracketing them with two isotropic runs answers a question about
+    two grids that do not exist rather than the one that does.
+
+    Shared by phantom, calibrate and radius_audit so the three read a spacing
+    the same way -- calibrate sweeps a LIST of grids, so space already
+    separates its entries and the comma is the only separator left inside
+    one; the other two accept either form and mean the same thing by both.
+    """
+    return as_triple([float(v) for v in str(text).replace("x", ",").split(",")])
+
+
 def as_triple(value, name="spacing", allow_zero=False):
     """
     Accepts a scalar or a length-3 sequence, returns a float array of 3.
@@ -475,7 +491,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", default="phantom.nii.gz", help="Mask to write (nifti)")
     parser.add_argument("--segments-csv", help="Ground truth segment table to write")
-    parser.add_argument("--orders", type=int, default=8, help="Number of Strahler orders. Default: 8")
+    parser.add_argument("--orders", type=int, default=7, help="Number of Strahler orders. Default: 7")
     parser.add_argument("--root-diameter", type=float, default=20.0,
                         help="Diameter (mm) of the trunk. Default: 20")
     parser.add_argument("--root-length", type=float, default=40.0,
@@ -496,10 +512,12 @@ def main():
     parser.add_argument("--jitter", type=float, default=0.0,
                         help="Lognormal spread applied to every diameter and length. 0 gives an "
                              "exact tree. Default: 0")
-    parser.add_argument("--spacing", type=float, nargs="+", default=[1.5], metavar="MM",
+    parser.add_argument("--spacing", nargs="+", default=["1.5"], metavar="MM",
                         help="Voxel size (mm): one value for an isotropic grid, three for the "
-                             "anisotropic grid of a real acquisition. Give the ACQUIRED size, not "
-                             "the size the chain resamples to. Default: 1.5")
+                             "anisotropic grid of a real acquisition, space- or comma-separated "
+                             "('1.25 0.799 1.25' and '1.25,0.799,1.25' are the same grid). Give "
+                             "the ACQUIRED size, not the size the chain resamples to. "
+                             "Default: 1.5")
     parser.add_argument("--blur", type=float, nargs="+", default=None, metavar="MM",
                         help="Gaussian blur sigma (mm) applied before thresholding, one value or "
                              "three. Default: two thirds of the voxel along each axis")
@@ -512,7 +530,7 @@ def main():
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    spacing = as_triple(args.spacing)
+    spacing = parse_spacing(",".join(args.spacing))
     blur = default_blur(spacing, args.blur)
 
     segments = build_tree(args.orders, args.root_diameter, args.root_length, args.rd, args.rl,

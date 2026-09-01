@@ -327,8 +327,9 @@ def print_slope(rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--spacing", default="1.25,0.799,1.25", metavar="MM",
-                        help="Acquired voxel size: one number, or three comma-separated. The "
+    parser.add_argument("--spacing", nargs="+", default=["1.25,0.799,1.25"], metavar="MM",
+                        help="Acquired voxel size: one number, or three space- or "
+                             "comma-separated. The "
                              "audit is worth running on an anisotropic grid; on an isotropic one "
                              "it measures the chain's radius bias with no orientation term to "
                              "find. Default: 1.25,0.799,1.25")
@@ -372,7 +373,7 @@ def main():
     parser.add_argument("--keep", help="Directory to keep the phantoms and point CSVs in")
     args = parser.parse_args()
 
-    spacing = phantom.as_triple([float(v) for v in str(args.spacing).replace("x", ",").split(",")])
+    spacing = phantom.parse_spacing(",".join(args.spacing))
     workdir = args.keep or tempfile.mkdtemp(prefix="radius_audit_")
     os.makedirs(workdir, exist_ok=True)
     print(f"working in {workdir}")

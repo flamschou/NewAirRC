@@ -33,7 +33,7 @@ own beyond those checks -- deliberately, so that nothing here can disagree
 with what produced the numbers.
 
 Usage:
-    python -m analysis.cohort 'results/*_ratios.csv' --counting element --out cohort.csv
+    python -m analysis.cohort 'results/*_ratios.csv' --counting element --csv cohort.csv
     python -m analysis.cohort results/*.csv --ratio R_d --min-orders 3
 """
 import argparse
@@ -126,8 +126,10 @@ def main():
                         help="The --ratios-csv files, or globs matching them")
     parser.add_argument("--counting", choices=("segment", "element"), default="element",
                         help="Which counting to read. Default: element")
-    parser.add_argument("--ordering", default=None,
-                        help="Keep only rows with this ordering, when a directory holds several")
+    parser.add_argument("--ordering", choices=("generation", "strahler", "strahler_dd",
+                                              "bfs_generation"), default=None,
+                        help="Keep only rows with this ordering, when a directory holds several. "
+                             "The four are what `centerline --ordering` can write")
     parser.add_argument("--min-orders", type=int, default=3, metavar="N",
                         help="A subject whose fit rests on fewer orders than this is listed as "
                              "excluded. Three points still admit a regression; two make the slope "
@@ -135,7 +137,7 @@ def main():
     parser.add_argument("--anisotropy-tolerance", type=float, default=0.05, metavar="FRACTION",
                         help="How far a subject's anisotropy may sit from the cohort median before "
                              "it is flagged as acquired differently. Default: 0.05")
-    parser.add_argument("--out", help="CSV to write, one row per subject")
+    parser.add_argument("--csv", help="CSV to write, one row per subject")
     args = parser.parse_args()
 
     paths = sorted({p for pattern in args.paths for p in (glob.glob(pattern) or [pattern])})
@@ -210,7 +212,7 @@ def main():
               f"after the per-order table was visible, which is the one degree of freedom that "
               f"turns any tree into a published value")
 
-    if args.out:
+    if args.csv:
         columns = ("subject", "spacing_x_mm", "spacing_y_mm", "spacing_z_mm", "anisotropy",
                    "fit_floor_mm", "fit_min_branches", "order_min", "order_max", "n_orders",
                    "prespecified", "excluded", "flagged") + tuple(
@@ -229,11 +231,11 @@ def main():
                 row[f"{name}_ci_high"] = source.get("ci_high", "")
                 row[f"{name}_r2"] = source.get("r2", "")
             rows.append({column: row.get(column, "") for column in columns})
-        with open(args.out, "w", newline="") as handle:
+        with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=columns)
             writer.writeheader()
             writer.writerows(rows)
-        print(f"\nwrote {args.out}")
+        print(f"\nwrote {args.csv}")
 
 
 if __name__ == "__main__":

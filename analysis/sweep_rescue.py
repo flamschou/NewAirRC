@@ -340,22 +340,42 @@ def summarize(rows, args):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--manifest", default=cfg.MANIFEST_PATH)
-    parser.add_argument("--split", default="val")
-    parser.add_argument("--classes", nargs="+", default=["artery"], metavar="NAME")
-    parser.add_argument("--pred-dir", default=None)
-    parser.add_argument("--pred-suffix", default=PRED_SUFFIX)
-    parser.add_argument("--rewrite", action="append", metavar="OLD=NEW")
-    parser.add_argument("--data-dir")
-    parser.add_argument("--swap-av", action="store_true")
+    parser.add_argument("--manifest", default=cfg.MANIFEST_PATH,
+                        help=f"Manifest train.py was run on. Default: config.MANIFEST_PATH "
+                             f"({cfg.MANIFEST_PATH})")
+    parser.add_argument("--split", default="val", help="Split to sweep. Default: val")
+    parser.add_argument("--classes", nargs="+", default=["artery"], metavar="NAME",
+                        help="Classes to score, each truncated on its own tree -- the union of "
+                             "the arterial and the venous tree is not a tree. Default: artery")
+    parser.add_argument("--pred-dir", default=None,
+                        help="Directory holding the predictions. Default: next to each image, "
+                             "where inference.py writes them")
+    parser.add_argument("--pred-suffix", default=PRED_SUFFIX,
+                        help=f"Suffix inference.py appended to the image stem. Default: {PRED_SUFFIX}")
+    parser.add_argument("--rewrite", action="append", metavar="OLD=NEW",
+                        help="Replace the prefix OLD with NEW in every path of the manifest, "
+                             "for a cohort read from another mount than the one it was written "
+                             "on. Repeatable; the first matching rule wins; the manifest is "
+                             "not modified")
+    parser.add_argument("--data-dir",
+                        help="Fallback for when the layout changed and not just the root, so "
+                             "no prefix substitution exists: where the manifest's volumes "
+                             "actually are, searched recursively")
+    parser.add_argument("--swap-av", action="store_true",
+                        help="Swap the artery and vein indices of the predictions before "
+                             "scoring, for a checkpoint trained with the inverted convention")
     parser.add_argument("--limit", type=int, default=None, metavar="N",
                         help="Only the first N cases of the split. Start here: the trees cost "
                              "the same as a compute_dice run, the grid on top of them is free")
     parser.add_argument("--margins", type=float, nargs="+",
-                        default=[0.0, 0.5, 1.0, 1.5, 2.0, 3.0], metavar="MM")
+                        default=[0.0, 0.5, 1.0, 1.5, 2.0, 3.0], metavar="MM",
+                        help="--rescue-margin values to put in the grid, in mm")
     parser.add_argument("--distances", type=float, nargs="+", default=[1.0, 1.5, 2.0],
-                        metavar="RADII")
-    parser.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION")
+                        metavar="RADII",
+                        help="--rescue-distance values to put in the grid, in local radii")
+    parser.add_argument("--rescue-coverage", type=float, default=0.5, metavar="FRACTION",
+                        help="How much of a branch in the margin band must be supported by the "
+                             "other side's cut for the two to be the same vessel. Default: 0.5")
     parser.add_argument("--peels", type=peel_pair, nargs="+", default=None, metavar='"REF PRED"',
                         help="--peel-terminals values to put in the grid: how many terminal layers "
                              "each side loses. Each value is one or two numbers in ONE shell "
@@ -375,8 +395,9 @@ def build_parser():
     parser.add_argument("--supports", nargs="+", choices=("mask", "centerline"),
                         default=["mask", "centerline"],
                         help="Which definition(s) of supported to put in the grid. Default: both")
-    parser.add_argument("--label", default="",
-                        help="Written into every row, to say which model produced it. Two "
+    parser.add_argument("--model", default="",
+                        help="Written into every row's `model` column, to say which model "
+                             "produced it. Two "
                              "checkpoints swept into two CSVs then concatenate into the one "
                              "table the floor is actually chosen on")
     parser.add_argument("--csv", help="One row per case, class and combination")
@@ -422,7 +443,7 @@ def main():
                 print(f"  skipped: {why}")
                 continue
             for row in produced:
-                row.update(case=case, model=args.label, **{"class": name})
+                row.update(case=case, model=args.model, **{"class": name})
             rows.append(produced)
             best = max(produced, key=lambda r: r["dice_large"])
             plain = min(produced, key=lambda r: (r["margin_mm"], r["cut_step_mm"],

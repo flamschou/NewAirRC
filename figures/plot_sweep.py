@@ -1,7 +1,7 @@
 """
 Turns a sweep_rescue.py CSV into the two figures the floor is chosen on.
 
-    python -m figures.plot_sweep --csv sweep_vibe_v1.csv
+    python -m figures.plot_sweep --from-csv sweep_vibe_v1.csv
 
 Figure 1 (decision) answers "which floor, and does the rescue earn its place":
     A  Dice against the floor, one line per rescue margin
@@ -217,7 +217,8 @@ def figure_dispersion(data, margins, title, worst):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", required=True, help="output of sweep_rescue.py --csv")
+    parser.add_argument("--from-csv", required=True, metavar="PATH",
+                        help="CSV to read: the output of `sweep_rescue --csv`")
     parser.add_argument("--out", default="sweep", metavar="PREFIX",
                         help="writes PREFIX_decision.png and PREFIX_dispersion.png")
     parser.add_argument("--step", type=float, default=None, metavar="MM",
@@ -235,7 +236,8 @@ def build_parser():
                         help="draw a rule at the floor you are proposing")
     parser.add_argument("--worst", type=int, default=3, metavar="N",
                         help="name the N weakest cases in the dispersion figure")
-    parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--dpi", type=int, default=200,
+                        help="Resolution of the PNGs. Default: 200")
     return parser
 
 
@@ -257,7 +259,7 @@ def pick(data, column, requested):
 def main():
     args = build_parser().parse_args()
     style()
-    data = pd.read_csv(args.csv)
+    data = pd.read_csv(args.from_csv)
 
     data = data[data.cut_step_mm == pick(data, "cut_step_mm", args.step)]
     data = data[data.support == pick(data, "support", args.support)]
