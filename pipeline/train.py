@@ -2,12 +2,24 @@
 """
 train.py
 
-Single-stage training entrypoint for the DynUNet vascular segmentation
-model. Reads all hyperparameters from config.py and the image/label pairs
-from the manifest pointed to by config.MANIFEST_PATH.
+Single-stage training entrypoint for the DynUNet vascular segmentation model.
+
+Settings resolve in three layers, each overriding the one below:
+
+    command-line flag  >  environment variable  >  config.py default
+
+What describes the RUN is a flag (--learning-rate, --cldice-weight, ...);
+what describes the MACHINE stays in the environment (DATASET_ROOT,
+NUM_WORKERS, ...) -- see .env.example.
+
+Usage:
+    python -m pipeline.train --manifest manifests/manifest_vibe.json
+    python -m pipeline.train --debug --manifest manifests/manifest.example.json
 """
+import argparse
 import logging
 import os
+import sys
 
 import pytorch_lightning
 import torch
@@ -171,7 +183,115 @@ class Net(pytorch_lightning.LightningModule):
         return self.val_loader
 
 
+def build_parser():
+    """
+    Every default is the value config.py already resolved, and config.py
+    resolves each from the environment first. That is what gives, for free
+    and without the value being written down twice:
+
+        flag  >  environment variable  >  config.py default
+
+    So `--learning-rate 1e-4` and `LEARNING_RATE=1e-4` still mean the same
+    thing, and slurm/*.slurm keep working unchanged by exporting variables.
+
+    What belongs here rather than in the environment is anything that
+    describes the RUN: a .env is gitignored and invisible, so a learning rate
+    living there makes two people running the same command get different
+    results with nothing in the log to say why. A flag lands in the shell
+    history and in slurm-<jobid>.out. Machine-level settings -- where the
+    data is, how many workers the node can feed -- stay in the environment,
+    where nobody wants to retype them.
+    """
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    run = parser.add_argument_group("the run")
+    run.add_argument("--manifest", default=cfg.MANIFEST_PATH,
+                     help=f"Image/label pairs to train on. Default: {cfg.MANIFEST_PATH}")
+    run.add_argument("--experiment-name", default=cfg.EXPERIMENT_NAME, metavar="NAME",
+                     help="Names this run's checkpoints and TensorBoard logs. It no longer "
+                          "affects the dataset cache, which is keyed on the preprocessing "
+                          f"itself. Default: {cfg.EXPERIMENT_NAME}")
+    run.add_argument("--learning-rate", type=float, default=cfg.LEARNING_RATE, metavar="LR",
+                     help=f"Initial LR of the PolyLR schedule. Default: {cfg.LEARNING_RATE}")
+    run.add_argument("--max-epochs", type=int, default=cfg.MAX_EPOCHS, metavar="N",
+                     help=f"Default: {cfg.MAX_EPOCHS}")
+    run.add_argument("--finetune-from", default=cfg.FINETUNE_FROM, metavar="CKPT",
+                     help="Checkpoint whose WEIGHTS ONLY seed this run -- not its optimizer "
+                          "state or epoch counter, which is what separates a fine-tuning from "
+                          "a resume. Auto-resuming this run's own last.ckpt still takes "
+                          "precedence. Default: train from scratch")
+    run.add_argument("--debug", action="store_true", default=cfg.DEBUG,
+                     help="Fast, tiny run (64^3 patches, one epoch, no workers) that exercises "
+                          "every code path without producing a useful model. Use it to check "
+                          "an install before starting anything real")
+
+    cldice = parser.add_argument_group(
+        "continuity term (clDice)",
+        "Dice and cross-entropy barely notice a two-voxel break in a vessel, which "
+        "nonetheless splits the tree and corrupts every branching statistic measured "
+        "downstream. clDice scores the skeletons instead.")
+    cldice.add_argument("--cldice-weight", type=float, default=cfg.CLDICE_WEIGHT,
+                        metavar="LAMBDA",
+                        help="The lambda in `DiceCE + lambda * clDice`. 0 disables the term "
+                             "entirely and reproduces the original loss exactly; 0.5 is the "
+                             f"clDice paper's value for tubular structures. Default: "
+                             f"{cfg.CLDICE_WEIGHT}")
+    cldice.add_argument("--cldice-iterations", type=int, default=cfg.CLDICE_ITERATIONS,
+                        metavar="N",
+                        help="Soft-skeletonization iterations. Must be >= the largest vessel "
+                             "radius in voxels, or thick vessels never thin to a curve. "
+                             f"Default: {cfg.CLDICE_ITERATIONS}")
+    cldice.add_argument("--cldice-warmup-epochs", type=int, default=cfg.CLDICE_WARMUP_EPOCHS,
+                        metavar="N",
+                        help="Epochs over which the weight ramps linearly from 0; on a "
+                             "not-yet-vessel-shaped prediction the term skeletonizes noise. "
+                             f"0 disables the ramp. Default: {cfg.CLDICE_WARMUP_EPOCHS}")
+    cldice.add_argument("--cldice-max-patches", type=int, default=cfg.CLDICE_MAX_PATCHES,
+                        metavar="N",
+                        help="How many patches of the batch the term scores. Raising this "
+                             "raises peak GPU memory steeply -- the run OOMed at 24 on a "
+                             f"93 GiB H100. 0 means no cap. Default: {cfg.CLDICE_MAX_PATCHES}")
+    return parser
+
+
+def apply_overrides(args):
+    """
+    Writes the parsed values back onto the config module.
+
+    Unusual, and deliberate: `dataset.build_datasets(config, ...)`,
+    `model.build_dynunet(config)` and `config_loss.build_loss(config)` all
+    take the config module and read attributes off it, and train.py reads
+    `cfg.X` in fifteen places. Setting the attributes here means none of that
+    has to change, and there is exactly one place where a flag becomes a
+    setting. Threading a settings object through the whole chain instead
+    would touch four modules for no benefit this pipeline can use.
+
+    DEBUG is not overridable this way: config.py acts on it at import time,
+    shrinking the patch and the batch, so it has to be set before the import
+    -- which is why --debug re-execs rather than assigning.
+    """
+    cfg.MANIFEST_PATH = args.manifest
+    cfg.EXPERIMENT_NAME = args.experiment_name
+    cfg.LEARNING_RATE = args.learning_rate
+    cfg.MAX_EPOCHS = args.max_epochs
+    cfg.FINETUNE_FROM = args.finetune_from or None
+    cfg.CLDICE_WEIGHT = args.cldice_weight
+    cfg.CLDICE_ITERATIONS = args.cldice_iterations
+    cfg.CLDICE_WARMUP_EPOCHS = args.cldice_warmup_epochs
+    cfg.CLDICE_MAX_PATCHES = args.cldice_max_patches
+
+
 def main():
+    args = build_parser().parse_args()
+    if args.debug and not cfg.DEBUG:
+        # config.py resolves DEBUG at import time -- it is what shrinks
+        # PATCH_SIZE and BATCH_SIZE -- so the flag cannot be applied after the
+        # fact. Re-exec with the variable set and let the import do its job.
+        os.environ["DEBUG"] = "1"
+        os.execv(sys.executable, [sys.executable, "-m", "pipeline.train"] + sys.argv[1:])
+    apply_overrides(args)
+
     torch.set_float32_matmul_precision("medium")
     # Seeds python/numpy/torch, and with workers=True the dataloader workers
     # too -- which is what actually matters here, since the patch sampling

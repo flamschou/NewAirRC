@@ -25,8 +25,9 @@ module add conda
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate flamant_segmentation
 
-# config.py reads these from the environment; nothing else needs to change.
-export MANIFEST_PATH="$REPO_DIR/manifests/manifest_vibe.json"
+# Machine-level only: where the run writes. Everything that describes the RUN
+# is a flag on the command at the bottom, so slurm-<jobid>.out records the
+# parameters that produced the checkpoint.
 export DATASET_ROOT="/data/flamant/data/AirRC_runs/vessel_segmentation"  # TODO: persistent path for cache/checkpoints/logs
 
 echo "Node: $(hostname)"
@@ -34,4 +35,4 @@ echo "Conda base: $(conda info --base)"
 echo "Python: $(which python)"
 python -c "import pytorch_lightning; print('pytorch_lightning OK:', pytorch_lightning.__version__)"
 
-python -m pipeline.train
+python -m pipeline.train --manifest "$REPO_DIR/manifests/manifest_vibe.json"

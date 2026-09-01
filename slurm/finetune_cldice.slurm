@@ -32,29 +32,17 @@ module add conda
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate flamant_segmentation
 
-export MANIFEST_PATH="$REPO_DIR/manifests/manifest_vibe.json"
+# Machine-level only: where the run writes, and what the node can feed.
+# Everything that describes the RUN is a flag on the command at the bottom,
+# so slurm-<jobid>.out records the parameters that produced the checkpoint.
 export DATASET_ROOT="/data/flamant/data/AirRC_runs/vessel_segmentation"
 
-# The run this one starts from. Its checkpoints, logs and dataset cache are
-# left untouched: the fine-tuning writes under its own EXPERIMENT_NAME.
+# The run this one starts from. Its checkpoints and logs are left untouched:
+# the fine-tuning writes under its own --experiment-name. The dataset cache
+# is shared automatically -- it is keyed on the preprocessing, which is
+# identical here, not on the name of the run.
 BASE_EXPERIMENT="vessel_segmentation_vein_artery_vibe_v1"
-
-export EXPERIMENT_NAME="${BASE_EXPERIMENT}_cldice_ft"
-export FINETUNE_FROM="$DATASET_ROOT/checkpoints/$BASE_EXPERIMENT/run/last.ckpt"
-# Preprocessing is identical to the baseline, so share its PersistentDataset
-# cache instead of re-caching the whole dataset under the new name.
-export CACHE_NAME="$BASE_EXPERIMENT"
-
-# The continuity term. 0.5 is the clDice paper's value for tubular
-# structures; 6 skeletonization iterations covers the ~5-voxel radius of the
-# largest vessels at 1 mm spacing; the weight ramps in over 20 epochs.
-export CLDICE_WEIGHT="0.5"
-export CLDICE_ITERATIONS="6"
-export CLDICE_WARMUP_EPOCHS="20"
-# The batch reaching the loss is BATCH_SIZE x num_samples = 24 patches of
-# 128^3; the term scores 8 of them per step. Raising this raises peak GPU
-# memory steeply -- the run OOMed at 24 on a 93 GiB H100.
-export CLDICE_MAX_PATCHES="8"
+FINETUNE_FROM="$DATASET_ROOT/checkpoints/$BASE_EXPERIMENT/run/last.ckpt"
 
 # The clDice backward recomputes each thinning iteration (gradient
 # checkpointing), so it allocates and frees full-resolution buffers in a
@@ -69,12 +57,6 @@ export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
 # out -- check what it offers with `df -h /dev/shm`.
 export NUM_WORKERS="8"
 
-# A tenth of the baseline LR, and a short schedule. The point is to reconnect
-# broken branches, not to relearn the segmentation -- at 1e-3 the fine-tuning
-# would walk away from the voxel-level accuracy already in the checkpoint.
-export LEARNING_RATE="1e-4"
-export MAX_EPOCHS="150"
-
 echo "Node: $(hostname)"
 echo "Conda base: $(conda info --base)"
 echo "Python: $(which python)"
@@ -85,4 +67,24 @@ if [ ! -f "$FINETUNE_FROM" ]; then
 fi
 python -c "import pytorch_lightning; print('pytorch_lightning OK:', pytorch_lightning.__version__)"
 
-python -m pipeline.train
+# --learning-rate is a tenth of the baseline's, over a short schedule: the
+# point is to reconnect broken branches, not to relearn the segmentation --
+# at 1e-3 the fine-tuning would walk away from the voxel-level accuracy
+# already in the checkpoint.
+#
+# --cldice-weight 0.5 is the clDice paper's value for tubular structures;
+# 6 skeletonization iterations covers the ~5-voxel radius of the largest
+# vessels at 1 mm spacing; the weight ramps in over 20 epochs. The batch
+# reaching the loss is 24 patches of 128^3 and the term scores 8 of them per
+# step -- raising that raises peak GPU memory steeply, the run OOMed at 24
+# on a 93 GiB H100.
+python -m pipeline.train \
+    --manifest "$REPO_DIR/manifests/manifest_vibe.json" \
+    --experiment-name "${BASE_EXPERIMENT}_cldice_ft" \
+    --finetune-from "$FINETUNE_FROM" \
+    --learning-rate 1e-4 \
+    --max-epochs 150 \
+    --cldice-weight 0.5 \
+    --cldice-iterations 6 \
+    --cldice-warmup-epochs 20 \
+    --cldice-max-patches 8

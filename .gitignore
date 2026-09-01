@@ -1,3 +1,6 @@
+# Local configuration: copy .env.example to .env and edit it
+.env
+
 # Python
 __pycache__/
 *.py[cod]

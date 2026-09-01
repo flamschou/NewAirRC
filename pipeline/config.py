@@ -6,6 +6,9 @@ Single source of truth for the vascular tree segmentation training pipeline.
 Nothing else in the codebase should hardcode paths, patch geometry, or class
 counts -- change values here instead.
 """
+import ast
+import hashlib
+import json
 import os
 
 # --- Paths ---
@@ -29,21 +32,8 @@ EXPERIMENT_NAME = os.environ.get(
     "EXPERIMENT_NAME", "vessel_segmentation_vein_artery_vibe_v1"
 )
 
-# PersistentDataset's cache key is based only on item identity (image/label
-# paths), never on the transform pipeline itself -- changing any transform
-# that affects the deterministic preprocessing (LABEL_CLASS_MAP,
-# TARGET_SPACING, NORMALIZE_INTENSITY, ...) silently reuses stale cached
-# tensors otherwise. Scoping the cache dir to EXPERIMENT_NAME means the
-# rename that should already accompany such a change also gets you a fresh
-# cache for free.
-#
-# CACHE_NAME is the escape hatch for the opposite case: a run that changes
-# nothing in the deterministic preprocessing (only the loss, the LR, the
-# number of epochs) but does want its own EXPERIMENT_NAME. Point it at the
-# original experiment's name and the two runs share one cache instead of
-# each paying for a full re-cache of the dataset.
-CACHE_NAME = os.environ.get("CACHE_NAME", EXPERIMENT_NAME)
-CACHE_DIR = os.path.join(ROOT_DIR, "cache", CACHE_NAME)
+# CACHE_DIR is further down: it is keyed on the preprocessing, not on the
+# name of the run, and the values it depends on are defined below.
 
 # --- Classes ---
 # Index 0 must be the background. Add/remove foreground class names here --
@@ -74,6 +64,46 @@ TARGET_SPACING = (1.0, 1.0, 1.0)
 # normalization is kept on by default since it is a safe no-op on data
 # that is already normalized and a useful safety net otherwise.
 NORMALIZE_INTENSITY = True
+
+# --- Dataset cache ---
+# PersistentDataset keys its cache on item identity alone -- the image/label
+# paths -- never on the transform pipeline. Change TARGET_SPACING and it
+# happily reloads tensors resampled at the old one, without a word.
+#
+# So the missing half of the key is computed here: everything that decides
+# what lands in the cache, which is exactly the three values `_base_transforms`
+# reads plus the code of transforms.py itself. PATCH_SIZE and
+# POS_NEG_SAMPLE_RATIO are deliberately absent -- they act after the first
+# random transform, downstream of what is cached.
+#
+# transforms.py goes in as its AST with docstrings stripped, not as text, so
+# rewording a comment does not invalidate a cohort's worth of preprocessing
+# while an edit to `mode=` or to the label filter does.
+#
+# The consequence is that nothing has to be renamed to get a fresh cache, and
+# two runs that preprocess identically share one without being told to.
+def _preprocessing_fingerprint():
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), "transforms.py")
+    with open(source) as handle:
+        tree = ast.parse(handle.read())
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            body = node.body
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                node.body = body[1:]
+    blob = json.dumps(PREPROCESSING_SETTINGS, sort_keys=True) + "\n" + ast.dump(tree)
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
+PREPROCESSING_SETTINGS = {
+    "label_class_map": {str(k): v for k, v in LABEL_CLASS_MAP.items()},
+    "target_spacing": list(TARGET_SPACING),
+    "normalize_intensity": NORMALIZE_INTENSITY,
+}
+PREPROCESSING_FINGERPRINT = _preprocessing_fingerprint()
+CACHE_DIR = os.path.join(ROOT_DIR, "cache", PREPROCESSING_FINGERPRINT)
 
 # --- Patch sampling ---
 # Number of patches drawn is a total *budget* per epoch, split evenly across

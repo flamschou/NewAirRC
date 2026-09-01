@@ -8,10 +8,35 @@ deterministic part of the pipeline (loading, resampling, normalization) to
 disk; the random patch cropping and augmentations in transforms.py are
 re-applied on every access.
 """
+import json
+import os
+
 import numpy as np
 from monai.data import DataLoader, PersistentDataset, list_data_collate
 
 from . import transforms as transforms_module
+
+
+def _write_cache_settings(config):
+    """
+    Records what preprocessing produced this cache, beside it.
+
+    CACHE_DIR is named by a hash so that changing the preprocessing gets a
+    fresh cache without anyone having to rename anything -- but a directory
+    called `c6226b28fe9d` tells whoever finds it nothing at all. This is the
+    same sidecar `truncate.cut_settings` writes next to every cut, for the
+    same reason: a derived artefact should say what produced it.
+
+    Informational only. Nothing reads it back -- the hash in the directory
+    name IS the key, and it is computed from these values.
+    """
+    os.makedirs(config.CACHE_DIR, exist_ok=True)
+    path = os.path.join(config.CACHE_DIR, "preprocessing.json")
+    if os.path.exists(path):
+        return
+    with open(path, "w") as handle:
+        json.dump({"fingerprint": config.PREPROCESSING_FINGERPRINT,
+                   **config.PREPROCESSING_SETTINGS}, handle, indent=2, sort_keys=True)
 
 
 def build_datasets(config, train_entries, val_entries):
@@ -23,6 +48,8 @@ def build_datasets(config, train_entries, val_entries):
     Returns:
         tuple[PersistentDataset, PersistentDataset]: (train_ds, val_ds)
     """
+    _write_cache_settings(config)
+
     train_num_samples = int(np.ceil(config.TRAIN_PATCH_BUDGET / len(train_entries)))
     val_num_samples = int(np.ceil(config.VAL_PATCH_BUDGET / len(val_entries)))
 
