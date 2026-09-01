@@ -1,7 +1,7 @@
 """
 Turns a sweep_rescue.py CSV into the two figures the floor is chosen on.
 
-    python plot_sweep.py --csv sweep_vibe_v1.csv
+    python -m figures.plot_sweep --csv sweep_vibe_v1.csv
 
 Figure 1 (decision) answers "which floor, and does the rescue earn its place":
     A  Dice against the floor, one line per rescue margin
@@ -20,12 +20,10 @@ is where C sits near 1.0 and A has gone flat, so the number would not have
 moved had you chosen 0.5 mm either side.
 """
 import argparse
-import os
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 # validated categorical slots 1 and 2 (light surface #fcfcfb): adjacent CVD

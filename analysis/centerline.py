@@ -47,12 +47,12 @@ Outputs:
     --vtk           legacy VTK polydata polylines, for Slicer / ParaView
 
 Usage:
-    python centerline.py --input artery.nii.gz
-    python centerline.py --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
-    python centerline.py --input artery.nii.gz --ordering strahler_dd --fit-orders 1 6
-    python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 --bridge-sweep
-    python centerline.py --input av_seg.nii.gz --label 4 --compare-label 3 --reconnect-severed
-    python centerline.py --input artery.nii.gz --angle-sweep 0 0.5 1 1.5 2 2.5
+    python -m analysis.centerline --input artery.nii.gz
+    python -m analysis.centerline --input seg.nii.gz --label 2 --csv points.csv --vtk cl.vtk
+    python -m analysis.centerline --input artery.nii.gz --ordering strahler_dd --fit-orders 1 6
+    python -m analysis.centerline --input av_seg.nii.gz --label 4 --compare-label 3 --bridge-sweep
+    python -m analysis.centerline --input av_seg.nii.gz --label 4 --compare-label 3 --reconnect-severed
+    python -m analysis.centerline --input artery.nii.gz --angle-sweep 0 0.5 1 1.5 2 2.5
 
 See phantom.py for the calibration tree that says how much of what this
 prints is anatomy and how much is the voxel size.
@@ -1859,7 +1859,6 @@ def print_orphans(orphans, wall_gap, compare_name=None, dust_length=10.0, show=8
     if not orphans:
         return
     totals = orphan_populations(orphans)
-    big = orphan_populations(orphans, dust_length)
     substantial = sorted((row for row in orphans if row["length_mm"] >= dust_length),
                          key=lambda row: -row["length_mm"])
 

@@ -51,9 +51,9 @@ larger share of a thin vessel than of a thick one -- which is a bias on R_d,
 not a neutral simplification.
 
 Usage:
-    python calibrate.py --rd 1.30 1.45 1.56 1.70 1.85 --spacing 0.80 1.05 1.31 \
+    python -m analysis.calibrate --rd 1.30 1.45 1.56 1.70 1.85 --spacing 0.80 1.05 1.31 \
         --measured-rd 1.517 1.430 --out calibration.csv
-    python calibrate.py --spacing 1.25,0.799,1.25 --side-branches 0 1 2 3 \
+    python -m analysis.calibrate --spacing 1.25,0.799,1.25 --side-branches 0 1 2 3 \
         --repeats 5 --jitter 0.1 --measured-rb 2.31 --out calibration.csv
 """
 import argparse
@@ -66,7 +66,7 @@ import tempfile
 import numpy as np
 from scipy.stats import t as student_t
 
-import phantom
+from . import phantom
 
 RATIOS = ("R_b", "R_d", "R_l")
 

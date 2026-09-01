@@ -8,8 +8,8 @@ largest component -- a quick way to check how fragmented a
 segmentation is.
 
 Usage:
-    python connectivity.py --path <mask.nii.gz> --label 2
-    python connectivity.py --path <mask.nii.gz>          # any nonzero voxel
+    python -m analysis.connectivity --path <mask.nii.gz> --label 2
+    python -m analysis.connectivity --path <mask.nii.gz>          # any nonzero voxel
 """
 import argparse
 

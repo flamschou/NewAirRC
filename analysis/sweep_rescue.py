@@ -47,14 +47,14 @@ runs nearby. `n_rescued` climbing while the Dice no longer moves is that
 point.
 
 Usage:
-    python sweep_rescue.py --manifest manifest_vibe.json --split val --limit 4 \
+    python -m analysis.sweep_rescue --manifest manifests/manifest_vibe.json --split val --limit 4 \
         --rewrite /data/flamant/data/ct=/biomaps/.../data/ct --csv sweep.csv
 
-    python sweep_rescue.py --manifest manifest_ct.json --split val \
+    python -m analysis.sweep_rescue --manifest manifests/manifest_ct.json --split val \
         --margins 0 0.5 1 1.5 2 3 --distances 1.0 1.5 2.0 --csv sweep.csv
 
     # what the terminal peel is worth: read 'length gap', not 'dice_large'
-    python sweep_rescue.py --manifest manifest_ct.json --split val \
+    python -m analysis.sweep_rescue --manifest manifests/manifest_ct.json --split val \
         --peels 0 "1 0" "1 1" --margins 0 2 --csv sweep_peel.csv
 """
 import argparse
@@ -65,11 +65,11 @@ import os
 import nibabel as nib
 import numpy as np
 
-import config as cfg
-from centerline import DIRECTION_OFFSET
-from compute_dice import (PEEL_TERMINALS, PRED_SUFFIX, class_pairs, dice, parse_rewrite,
+from pipeline import config as cfg
+from .centerline import DIRECTION_OFFSET
+from .compute_dice import (PEEL_TERMINALS, PRED_SUFFIX, class_pairs, dice, parse_rewrite,
                           prediction_path_for, relocate, rewrite_paths)
-from truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
+from .truncate import (add_cut_arguments, add_skeleton_arguments, branch_coverage,
                       centerline_support, class_mask, limit_terminal_length, peel_layers,
                       peel_layers_of, peel_terminals, plan_cut, read_volume, retable,
                       select_branches, subdivide, to_grid)

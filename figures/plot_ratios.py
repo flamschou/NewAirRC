@@ -6,6 +6,9 @@ Les sujets dont le fit repose sur 3 points sont traces en creux et exclus
 de la moyenne (mais restent visibles).
 """
 
+import argparse
+import os
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -98,37 +101,51 @@ def strip(ax, values, mask_excl, ref_lo, ref_hi, title, subtitle,
     ax.set_axisbelow(True)
 
 
-fig, axes = plt.subplots(1, 3, figsize=(11, 4.6))
-excl = [s in EXCLUDED for s in SUBJECTS]
+def main():
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--out", default="results/ratios_cohorte.png",
+                        help="Chemin du PNG produit")
+    args = parser.parse_args()
 
-strip(axes[0], R_D, excl, 1.56, 1.60,
-      "$R_d$  rapport de diamètre",
-      "réf. 1,56–1,60   ·   n = 19")
+    fig, axes = plt.subplots(1, 3, figsize=(11, 4.6))
+    excl = [s in EXCLUDED for s in SUBJECTS]
 
-strip(axes[1], R_B, excl, 3.03, 3.03,
-      "$R_b$  rapport de ramification",
-      "réf. 3,03   ·   n = 19   ·   borne basse",
-      arrow_up=True)
+    strip(axes[0], R_D, excl, 1.56, 1.60,
+          "$R_d$  rapport de diamètre",
+          "réf. 1,56–1,60   ·   n = 19")
 
-strip(axes[2], MURRAY, excl, 3.0, 3.0,
-      "exposant de Murray",
-      "optimum 3   ·   n = 24",
-      use_all=True)
+    strip(axes[1], R_B, excl, 3.03, 3.03,
+          "$R_b$  rapport de ramification",
+          "réf. 3,03   ·   n = 19   ·   borne basse",
+          arrow_up=True)
 
-axes[0].set_ylabel("valeur mesurée")
-fig.text(0.5, -0.02,
-         "Points creux : fit à 3 points, exclus de la moyenne.   "
-         "$R_l$ non estimable (R² < 0,7 chez 12/24, non récupérable sur fantôme).",
-         ha="center", fontsize=9, color="#666666")
+    strip(axes[2], MURRAY, excl, 3.0, 3.0,
+          "exposant de Murray",
+          "optimum 3   ·   n = 24",
+          use_all=True)
 
-fig.tight_layout()
-fig.savefig("ratios_cohorte.png",
-            dpi=220, bbox_inches="tight", facecolor="white")
+    axes[0].set_ylabel("valeur mesurée")
+    fig.text(0.5, -0.02,
+             "Points creux : fit à 3 points, exclus de la moyenne.   "
+             "$R_l$ non estimable (R² < 0,7 chez 12/24, non récupérable sur fantôme).",
+             ha="center", fontsize=9, color="#666666")
 
-# ------------------------------------------------------- verification
-for name, vals, allsub in [("R_d", R_D, False), ("R_b", R_B, False),
-                           ("Murray", MURRAY, True)]:
-    kept = [v for v, e in zip(vals, excl) if allsub or not e]
-    print(f"{name:8s} n={len(kept):2d}  moyenne={np.mean(kept):.3f}  "
-          f"ET={np.std(kept, ddof=1):.3f}  "
-          f"étendue={min(kept):.3f}–{max(kept):.3f}")
+    fig.tight_layout()
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    fig.savefig(args.out,
+                dpi=220, bbox_inches="tight", facecolor="white")
+
+    # ------------------------------------------------------- verification
+    for name, vals, allsub in [("R_d", R_D, False), ("R_b", R_B, False),
+                               ("Murray", MURRAY, True)]:
+        kept = [v for v, e in zip(vals, excl) if allsub or not e]
+        print(f"{name:8s} n={len(kept):2d}  moyenne={np.mean(kept):.3f}  "
+              f"ET={np.std(kept, ddof=1):.3f}  "
+              f"étendue={min(kept):.3f}–{max(kept):.3f}")
+
+    print(f"\nwrote {args.out}")
+
+
+if __name__ == "__main__":
+    main()

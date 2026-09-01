@@ -11,7 +11,7 @@ re-applied on every access.
 import numpy as np
 from monai.data import DataLoader, PersistentDataset, list_data_collate
 
-import transforms as transforms_module
+from . import transforms as transforms_module
 
 
 def build_datasets(config, train_entries, val_entries):

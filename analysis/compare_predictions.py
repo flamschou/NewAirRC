@@ -48,7 +48,7 @@ from monai.metrics import (
 )
 from scipy.ndimage import label as connected_components
 
-import config as cfg
+from pipeline import config as cfg
 
 logging.basicConfig(
     level=logging.INFO,

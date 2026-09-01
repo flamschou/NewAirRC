@@ -18,11 +18,11 @@ from monai.transforms import AsDiscrete, Compose, EnsureType
 from pytorch_lightning.callbacks import LearningRateMonitor
 from torch.optim.lr_scheduler import _LRScheduler
 
-import config as cfg
-import dataset
-import manifest as manifest_module
-from config_loss import build_loss, cldice_warmup_weight
-from model import build_dynunet, load_checkpoint_weights
+from . import config as cfg
+from . import dataset
+from . import manifest as manifest_module
+from .config_loss import build_loss, cldice_warmup_weight
+from .model import build_dynunet, load_checkpoint_weights
 
 logging.basicConfig(
     level=logging.INFO,

@@ -66,16 +66,16 @@ is not a tree, and skeletonizing it would order the two against each other.
 
 Usage:
     # one mask, one class -> vascular_case001_large.nii.gz beside it
-    python truncate.py --input vascular_case001.nii.gz --label 3
+    python -m analysis.truncate --input vascular_case001.nii.gz --label 3
 
     # every class of config.LABEL_CLASS_MAP, one file per case
-    python truncate.py --input vascular_case001.nii.gz --classes
+    python -m analysis.truncate --input vascular_case001.nii.gz --classes
 
     # the validation split of a manifest, references truncated in place
-    python truncate.py --manifest manifest_ct.json --split val
+    python -m analysis.truncate --manifest manifests/manifest_ct.json --split val
 
     # the predictions that go with them, cut by the same rule
-    python truncate.py --input-dir /data/flamant/data/ct/lidc_idri \
+    python -m analysis.truncate --input-dir /data/flamant/data/ct/lidc_idri \
                        --pattern '*_vascular_pred.nii.gz' --classes
 """
 import argparse
@@ -90,7 +90,7 @@ import numpy as np
 from scipy.ndimage import binary_fill_holes
 from scipy.spatial import cKDTree
 
-from centerline import (DIRECTION_OFFSET, build_tree, resample_isotropic, skeletonize_graph,
+from .centerline import (DIRECTION_OFFSET, build_tree, resample_isotropic, skeletonize_graph,
                         trunk_calibre)
 
 # A segmental pulmonary artery leaves its lobar parent at roughly 4-6 mm and
@@ -1146,7 +1146,7 @@ def resolve_classes(args):
     if not args.classes:
         return [("foreground", None)]
 
-    import config as cfg  # only this branch needs the class map
+    from pipeline import config as cfg  # only this branch needs the class map
 
     classes = []
     for index, name in enumerate(cfg.CLASS_NAMES):

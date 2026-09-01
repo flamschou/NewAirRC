@@ -97,24 +97,24 @@ cohort.
 
 Usage:
     # predictions already produced by inference.py
-    python compute_dice.py --manifest manifest_ct.json --split val --csv dice.csv
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --split val --csv dice.csv
 
     # from the checkpoint, predicting whatever is missing on the way
-    python compute_dice.py --manifest manifest_ct.json --split val \
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --split val \
                            --checkpoint "$DATASET_ROOT/checkpoints/.../last.ckpt" \
                            --csv dice.csv
 
-    python compute_dice.py --manifest manifest_ct.json --classes artery vein \
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --classes artery vein \
                            --output-dir results/ --min-diameter 6
 
     # the cut alone, each side judged strictly on its own tree
-    python compute_dice.py --manifest manifest_ct.json --rescue-margin 0
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --rescue-margin 0
 
     # the tips kept, for a reference that is not a hand-drawn annotation
-    python compute_dice.py --manifest manifest_ct.json --peel-terminals 0
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --peel-terminals 0
 
     # both sides peeled alike, to check the asymmetric default against
-    python compute_dice.py --manifest manifest_ct.json --peel-terminals 1 1
+    python -m analysis.compute_dice --manifest manifests/manifest_ct.json --peel-terminals 1 1
 """
 import argparse
 import collections
@@ -127,11 +127,11 @@ import nibabel as nib
 import numpy as np
 from scipy.ndimage import uniform_filter
 
-import config as cfg
-from truncate import (SUFFIX, add_cut_arguments, add_skeleton_arguments, class_mask,
+from pipeline import config as cfg
+from .truncate import (SUFFIX, add_cut_arguments, add_skeleton_arguments, class_mask,
                       cut_settings, output_path, peel_layers, read_volume, settings_path, to_grid,
                       truncate_pair)
-from centerline import DIRECTION_OFFSET
+from .centerline import DIRECTION_OFFSET
 
 # What inference.py appends to the image stem. Kept as a literal rather than
 # imported, so this file does not drag torch and monai in behind it.
@@ -330,7 +330,7 @@ class Predictor:
     def load(self):
         import torch
 
-        from inference import load_model
+        from pipeline.inference import load_model
 
         if self.cpu:
             self.device = torch.device("cpu")
@@ -347,7 +347,7 @@ class Predictor:
         """Predicts one image and writes it where inference.py would."""
         import torch
 
-        from inference import predict_volume, save_prediction
+        from pipeline.inference import predict_volume, save_prediction
 
         if self.model is None:
             self.load()

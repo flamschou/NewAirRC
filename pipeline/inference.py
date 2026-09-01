@@ -19,9 +19,9 @@ import torch
 from monai.inferers import sliding_window_inference
 from monai.transforms import AsDiscrete, Invertd
 
-import config as cfg
-from model import build_dynunet, load_checkpoint_weights
-from transforms import get_inference_transforms
+from . import config as cfg
+from .model import build_dynunet, load_checkpoint_weights
+from .transforms import get_inference_transforms
 
 logging.basicConfig(
     level=logging.INFO,

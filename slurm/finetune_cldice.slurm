@@ -15,7 +15,15 @@
 # to the Dice+CE loss. Everything below is read by config.py from the
 # environment; no source file needs to change between this and train.slurm.
 
-cd "$SLURM_SUBMIT_DIR"
+# Submit from the repository root (`sbatch slurm/train.slurm`): SLURM_SUBMIT_DIR
+# is the directory sbatch was invoked from, and `python -m pipeline.train`
+# only resolves from there.
+REPO_DIR="$SLURM_SUBMIT_DIR"
+cd "$REPO_DIR"
+if [ ! -d "$REPO_DIR/pipeline" ]; then
+    echo "ERROR: submit from the repository root, not from $REPO_DIR" >&2
+    exit 1
+fi
 
 source /etc/profile.d/modules.sh
 module use --append /share/sharedmodules
@@ -24,7 +32,7 @@ module add conda
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate flamant_segmentation
 
-export MANIFEST_PATH="$SLURM_SUBMIT_DIR/manifest_vibe.json"
+export MANIFEST_PATH="$REPO_DIR/manifests/manifest_vibe.json"
 export DATASET_ROOT="/data/flamant/data/AirRC_runs/vessel_segmentation"
 
 # The run this one starts from. Its checkpoints, logs and dataset cache are
@@ -77,4 +85,4 @@ if [ ! -f "$FINETUNE_FROM" ]; then
 fi
 python -c "import pytorch_lightning; print('pytorch_lightning OK:', pytorch_lightning.__version__)"
 
-python train.py
+python -m pipeline.train

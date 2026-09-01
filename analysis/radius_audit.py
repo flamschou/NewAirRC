@@ -39,8 +39,8 @@ independent would divide the interval by twenty and quote a precision the
 experiment does not have.
 
 Usage:
-    python radius_audit.py --spacing 1.25,0.799,1.25 --control
-    python radius_audit.py --spacing 1.25,0.799,1.25 --orders 7 --side-branches 1 \
+    python -m analysis.radius_audit --spacing 1.25,0.799,1.25 --control
+    python -m analysis.radius_audit --spacing 1.25,0.799,1.25 --orders 7 --side-branches 1 \
         --points-csv audit.csv
 """
 import argparse
@@ -53,7 +53,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.stats import t as student_t
 
-import phantom
+from . import phantom
 
 ANGLE_EDGES = (0.0, 15.0, 30.0, 45.0, 60.0, 75.0, 90.0)
 

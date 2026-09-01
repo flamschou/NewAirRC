@@ -9,8 +9,16 @@ counts -- change values here instead.
 import os
 
 # --- Paths ---
+# DATASET_ROOT is where the run *writes* (cache, checkpoints, logs); the
+# manifest is an input that lives with the source, so it is resolved from
+# the repository rather than from DATASET_ROOT. Anchoring it on this file's
+# location keeps it correct whatever directory the job is launched from.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 ROOT_DIR = os.environ.get("DATASET_ROOT", "./data")
-MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(ROOT_DIR, "manifest_ct.json"))
+MANIFEST_PATH = os.environ.get(
+    "MANIFEST_PATH", os.path.join(REPO_ROOT, "manifests", "manifest_ct.json")
+)
 LOG_DIR = os.path.join(ROOT_DIR, "logs")
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 

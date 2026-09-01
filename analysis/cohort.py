@@ -33,8 +33,8 @@ own beyond those checks -- deliberately, so that nothing here can disagree
 with what produced the numbers.
 
 Usage:
-    python cohort.py 'results/*_ratios.csv' --counting element --out cohort.csv
-    python cohort.py results/*.csv --ratio R_d --min-orders 3
+    python -m analysis.cohort 'results/*_ratios.csv' --counting element --out cohort.csv
+    python -m analysis.cohort results/*.csv --ratio R_d --min-orders 3
 """
 import argparse
 import csv

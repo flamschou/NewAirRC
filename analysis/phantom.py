@@ -39,10 +39,10 @@ to the slice thickness along the others. Same working grid, different
 information. Rasterize at the ACQUIRED size and let the chain upsample.
 
 Usage:
-    python phantom.py --orders 8 --spacing 1.5 --output tree.nii.gz
-    python phantom.py --orders 8 --spacing 1.25 0.799 1.25 --output tree.nii.gz
-    python phantom.py --orders 8 --side-branches 1 --side-drop 2 --output tree.nii.gz
-    python centerline.py --input tree.nii.gz --ordering strahler_dd --fit-orders 1 8
+    python -m analysis.phantom --orders 8 --spacing 1.5 --output tree.nii.gz
+    python -m analysis.phantom --orders 8 --spacing 1.25 0.799 1.25 --output tree.nii.gz
+    python -m analysis.phantom --orders 8 --side-branches 1 --side-drop 2 --output tree.nii.gz
+    python -m analysis.centerline --input tree.nii.gz --ordering strahler_dd --fit-orders 1 8
 """
 import argparse
 
@@ -55,7 +55,7 @@ from scipy.ndimage import gaussian_filter
 # not a closed form, and two regressions that differ in their weighting or
 # their order range would show up in the comparison as a bias of the chain.
 # There is one copy of the fit and both sides call it.
-from centerline import branching_ratios
+from .centerline import branching_ratios
 
 
 def unit(vector):
